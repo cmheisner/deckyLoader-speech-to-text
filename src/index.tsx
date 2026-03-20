@@ -92,16 +92,22 @@ function notifyListeners(s: MicSettings) {
   listeners.forEach((fn) => fn(s));
 }
 
+// Recording state lives at module level so a component remount (which resets
+// useState to its initial value) re-reads the real current state instead of
+// always starting at false.
+let _isListening    = false;
+let _isTranscribing = false;
+
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
   useUIComposition?.(UIComposition.Notification);
 
-  const [settings, setSettings]       = useState<MicSettings>(globalSettings);
-  const [isListening, setIsListening] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [settings, setSettings]             = useState<MicSettings>(globalSettings);
+  // Initialize from module-level so a remount restores the real current state
+  const [isListening, setIsListening]       = useState(() => _isListening);
+  const [isTranscribing, setIsTranscribing] = useState(() => _isTranscribing);
 
-  // Ref mirrors isListening so async callbacks never see stale closure state
-  const isListeningRef = useRef(false);
+  const isListeningRef = useRef(_isListening);
   const autoStopRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Subscribe to settings changes pushed from the QAM panel
@@ -132,8 +138,11 @@ const FloatingMicButton: FC = () => {
     clearAutoStop();
     if (!isListeningRef.current) return;
     isListeningRef.current = false;
+    _isListening    = false;
+    _isTranscribing = true;
     setIsListening(false);
     setIsTranscribing(true);
+    toaster.toast({ title: "SpeechToText", body: "Recording stopped" });
     try {
       const transcript = await stopAndTranscribe();
       if (transcript) {
@@ -145,23 +154,33 @@ const FloatingMicButton: FC = () => {
     } catch (e: any) {
       toaster.toast({ title: "SpeechToText", body: `Transcription error: ${e?.message ?? e}` });
     } finally {
+      _isTranscribing = false;
       setIsTranscribing(false);
     }
   };
 
   const startListening = async () => {
+    // Set state synchronously before the await so the button turns red
+    // immediately, and a remount during the async call re-reads _isListening=true
+    _isListening = true;
+    isListeningRef.current = true;
+    setIsListening(true);
     try {
       const ok = await startRecording();
       if (!ok) {
+        _isListening = false;
+        isListeningRef.current = false;
+        setIsListening(false);
         toaster.toast({ title: "SpeechToText", body: "Failed to start recording. Check mic is connected." });
         return;
       }
     } catch (e: any) {
+      _isListening = false;
+      isListeningRef.current = false;
+      setIsListening(false);
       toaster.toast({ title: "SpeechToText", body: `Recording error: ${e?.message ?? e}` });
       return;
     }
-    isListeningRef.current = true;
-    setIsListening(true);
     if (globalSettings.timeoutEnabled) {
       autoStopRef.current = setTimeout(() => stopListening(), 5000);
     }
