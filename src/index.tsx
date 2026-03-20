@@ -1,5 +1,6 @@
 import {
   definePlugin,
+  findModuleChild,
   ToggleField,
   SliderField,
   PanelSection,
@@ -8,6 +9,31 @@ import {
 } from "@decky/ui";
 import { callable, toaster, routerHook } from "@decky/api";
 import React, { useState, useEffect, useRef, FC } from "react";
+
+// ── UIComposition (keeps overlay visible when QAM is closed — Issue 5) ────────
+enum UIComposition {
+  Hidden = 0,
+  Notification = 1,
+  Overlay = 2,
+  Opaque = 3,
+  OverlayKeyboard = 4,
+}
+
+const useUIComposition: ((mode: UIComposition) => void) | undefined =
+  findModuleChild((m: Record<string, unknown>) => {
+    if (typeof m !== "object") return undefined;
+    for (const prop in m) {
+      if (
+        typeof m[prop] === "function" &&
+        m[prop].toString().includes("AddMinimumCompositionStateRequest") &&
+        m[prop].toString().includes("ChangeMinimumCompositionStateRequest") &&
+        m[prop].toString().includes("RemoveMinimumCompositionStateRequest") &&
+        !m[prop].toString().includes("m_mapCompositionStateRequests")
+      ) {
+        return m[prop];
+      }
+    }
+  });
 import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
 
 // ── Backend callables ─────────────────────────────────────────────────────────
@@ -71,6 +97,7 @@ function notifyListeners(s: MicSettings) {
 
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
+  useUIComposition?.(UIComposition.Notification);
   const [settings, setSettings] = useState<MicSettings>(globalSettings);
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
