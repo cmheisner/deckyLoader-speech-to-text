@@ -9,32 +9,29 @@ import {
 } from "@decky/ui";
 import { callable, toaster, routerHook } from "@decky/api";
 import React, { useState, useEffect, useRef, FC } from "react";
+import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
 
-// ── UIComposition (keeps overlay visible when QAM is closed — Issue 5) ────────
+// ── UIComposition — keeps overlay visible when QAM panel is closed ─────────────
+// (Issue 5 in decky-plugin-lessons.md)
 enum UIComposition {
-  Hidden = 0,
   Notification = 1,
-  Overlay = 2,
-  Opaque = 3,
-  OverlayKeyboard = 4,
 }
 
 const useUIComposition: ((mode: UIComposition) => void) | undefined =
   findModuleChild((m: Record<string, unknown>) => {
-    if (typeof m !== "object") return undefined;
+    if (typeof m !== "object" || m === null) return undefined;
     for (const prop in m) {
       if (
         typeof m[prop] === "function" &&
-        m[prop].toString().includes("AddMinimumCompositionStateRequest") &&
-        m[prop].toString().includes("ChangeMinimumCompositionStateRequest") &&
-        m[prop].toString().includes("RemoveMinimumCompositionStateRequest") &&
-        !m[prop].toString().includes("m_mapCompositionStateRequests")
+        (m[prop] as Function).toString().includes("AddMinimumCompositionStateRequest") &&
+        (m[prop] as Function).toString().includes("ChangeMinimumCompositionStateRequest") &&
+        (m[prop] as Function).toString().includes("RemoveMinimumCompositionStateRequest") &&
+        !(m[prop] as Function).toString().includes("m_mapCompositionStateRequests")
       ) {
-        return m[prop];
+        return m[prop] as (mode: UIComposition) => void;
       }
     }
   });
-import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
 
 // ── Backend callables ─────────────────────────────────────────────────────────
 const typeText          = callable<[text: string], boolean>("type_text");
@@ -66,14 +63,6 @@ const POSITION_STYLES: Record<MicSettings["position"], React.CSSProperties> = {
 
 const STORAGE_KEY = "decky-stt-settings";
 
-function loadSettings(): MicSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...defaultSettings(), ...JSON.parse(raw) };
-  } catch {}
-  return defaultSettings();
-}
-
 function defaultSettings(): MicSettings {
   return {
     visible: true,
@@ -83,11 +72,19 @@ function defaultSettings(): MicSettings {
   };
 }
 
+function loadSettings(): MicSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return { ...defaultSettings(), ...JSON.parse(raw) };
+  } catch {}
+  return defaultSettings();
+}
+
 function saveSettings(s: MicSettings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
 }
 
-// ── Module-level shared state (listeners pattern, like timestamp repo) ────────
+// ── Module-level shared state ─────────────────────────────────────────────────
 let globalSettings = loadSettings();
 const listeners: Array<(s: MicSettings) => void> = [];
 
@@ -98,15 +95,16 @@ function notifyListeners(s: MicSettings) {
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
   useUIComposition?.(UIComposition.Notification);
-  const [settings, setSettings] = useState<MicSettings>(globalSettings);
+
+  const [settings, setSettings]       = useState<MicSettings>(globalSettings);
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
 
-  // Ref mirrors isListening so callbacks (setTimeout, etc.) never see stale state
+  // Ref mirrors isListening so async callbacks never see stale closure state
   const isListeningRef = useRef(false);
-  const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoStopRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Subscribe to settings changes from the QAM panel
+  // Subscribe to settings changes pushed from the QAM panel
   useEffect(() => {
     const listener = (s: MicSettings) => setSettings(s);
     listeners.push(listener);
@@ -115,13 +113,6 @@ const FloatingMicButton: FC = () => {
       if (i >= 0) listeners.splice(i, 1);
     };
   }, []);
-
-  // If the button is hidden while recording, cancel cleanly
-  useEffect(() => {
-    if (!settings.visible && isListeningRef.current) {
-      cancelListening();
-    }
-  }, [settings.visible]);
 
   // Cleanup on unmount
   useEffect(() => () => {
@@ -158,14 +149,6 @@ const FloatingMicButton: FC = () => {
     }
   };
 
-  const cancelListening = async () => {
-    clearAutoStop();
-    isListeningRef.current = false;
-    setIsListening(false);
-    setIsTranscribing(false);
-    await cancelRecording();
-  };
-
   const startListening = async () => {
     const ok = await startRecording();
     if (!ok) {
@@ -179,15 +162,21 @@ const FloatingMicButton: FC = () => {
     }
   };
 
-  // ── Tap handler — onPointerUp + touchAction:none is more reliable than onClick
-  // in Decky's global component context where Steam can intercept touch events.
+  // ── Tap handler ──────────────────────────────────────────────────────────────
+  // onPointerUp + touchAction:none is more reliable than onClick in Decky's
+  // global component context — Steam's input layer can swallow click events.
   const onPointerUp = (e: React.PointerEvent) => {
     e.stopPropagation();
     if (isTranscribing) return;
-    isListeningRef.current ? stopListening() : startListening();
+    if (isListeningRef.current) {
+      stopListening();
+    } else {
+      toaster.toast({ title: "SpeechToText", body: "Starting recording..." });
+      startListening();
+    }
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────────
   if (!settings.visible) return null;
 
   const { iconSize, position } = settings;
@@ -207,7 +196,7 @@ const FloatingMicButton: FC = () => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        cursor: isTranscribing ? "wait" : "pointer",
+        cursor: "pointer",
         boxShadow: isListening
           ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
           : "0 3px 16px rgba(0,0,0,0.55)",
@@ -246,9 +235,9 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
       <PanelSectionRow>
         <ToggleField
           label="Show microphone button"
-          description={settings.visible ? "Floating mic button is visible" : "Floating mic button is hidden"}
+          description={settings.visible ? "Visible" : "Hidden"}
           checked={settings.visible}
-          onChange={(v) => update({ visible: v })}
+          onChange={(v: boolean) => update({ visible: v })}
         />
       </PanelSectionRow>
 
@@ -261,7 +250,7 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
               : "Mic stays on until you tap the bubble again"
           }
           checked={settings.timeoutEnabled}
-          onChange={(v) => update({ timeoutEnabled: v })}
+          onChange={(v: boolean) => update({ timeoutEnabled: v })}
         />
       </PanelSectionRow>
 
@@ -272,7 +261,7 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
           min={32}
           max={80}
           step={4}
-          onChange={(v) => update({ iconSize: v })}
+          onChange={(v: number) => update({ iconSize: v })}
         />
       </PanelSectionRow>
 
@@ -283,7 +272,7 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
           min={0}
           max={POSITIONS.length - 1}
           step={1}
-          onChange={(v) => update({ position: POSITIONS[v] })}
+          onChange={(v: number) => update({ position: POSITIONS[v] })}
         />
       </PanelSectionRow>
     </PanelSection>
