@@ -2,9 +2,10 @@
   "name": "decky-speech-to-text",
   "version": "1.0.0",
   "description": "Speech-to-text floating mic bubble for Steam Deck",
+  "type": "module",
   "scripts": {
-    "build": "rollup --config node_modules/@decky/rollup/src/index.js",
-    "watch": "rollup --config node_modules/@decky/rollup/src/index.js --watch"
+    "build": "rollup --config rollup.config.mjs",
+    "watch": "rollup --config rollup.config.mjs --watch"
   },
   "devDependencies": {
     "@decky/api": "*",

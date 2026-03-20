@@ -4,6 +4,7 @@ import {
   PanelSection,
   PanelSectionRow,
   staticClasses,
+  routerHook,
 } from "@decky/ui";
 import { callable, toaster } from "@decky/api";
 import React, { useState, useEffect, useRef, FC } from "react";
@@ -213,23 +214,14 @@ const Content: FC = () => {
 
 // ── Plugin entry point ────────────────────────────────────────────────────────
 export default definePlugin(() => {
-  // Inject the floating bubble into the page DOM outside of the QAM panel
-  const container = document.createElement("div");
-  container.id = "speech-to-text-floating-root";
-  document.body.appendChild(container);
-
-  // Use Steam's bundled React / ReactDOM to avoid dual-React issues
-  const React = (window as any).SP_REACT as typeof import("react");
-  const ReactDOM = (window as any).SP_REACTDOM as typeof import("react-dom");
-  ReactDOM.render(React.createElement(FloatingMicButton), container);
+  routerHook.addGlobalComponent("SpeechToTextBubble", FloatingMicButton);
 
   return {
     title: <div className={staticClasses.Title}>SpeechToText</div>,
     content: <Content />,
     icon: <FaMicrophone />,
     onDismount() {
-      ReactDOM.unmountComponentAtNode(container);
-      container.remove();
+      routerHook.removeGlobalComponent("SpeechToTextBubble");
     },
   };
 });
