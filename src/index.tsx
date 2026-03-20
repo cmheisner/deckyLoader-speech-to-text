@@ -150,9 +150,14 @@ const FloatingMicButton: FC = () => {
   };
 
   const startListening = async () => {
-    const ok = await startRecording();
-    if (!ok) {
-      toaster.toast({ title: "SpeechToText", body: "Failed to start recording. Check mic is connected." });
+    try {
+      const ok = await startRecording();
+      if (!ok) {
+        toaster.toast({ title: "SpeechToText", body: "Failed to start recording. Check mic is connected." });
+        return;
+      }
+    } catch (e: any) {
+      toaster.toast({ title: "SpeechToText", body: `Recording error: ${e?.message ?? e}` });
       return;
     }
     isListeningRef.current = true;
