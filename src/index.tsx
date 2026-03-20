@@ -179,8 +179,10 @@ const FloatingMicButton: FC = () => {
     }
   };
 
-  // ── Click handler (no drag) ──────────────────────────────────────────────────
-  const onClick = () => {
+  // ── Tap handler — onPointerUp + touchAction:none is more reliable than onClick
+  // in Decky's global component context where Steam can intercept touch events.
+  const onPointerUp = (e: React.PointerEvent) => {
+    e.stopPropagation();
     if (isTranscribing) return;
     isListeningRef.current ? stopListening() : startListening();
   };
@@ -194,7 +196,7 @@ const FloatingMicButton: FC = () => {
 
   return (
     <div
-      onClick={onClick}
+      onPointerUp={onPointerUp}
       style={{
         position: "fixed",
         zIndex: 9999,
@@ -210,6 +212,7 @@ const FloatingMicButton: FC = () => {
           ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
           : "0 3px 16px rgba(0,0,0,0.55)",
         transition: "background 0.15s, box-shadow 0.2s",
+        touchAction: "none",
         userSelect: "none",
         WebkitUserSelect: "none",
         ...POSITION_STYLES[position as MicSettings["position"]],
