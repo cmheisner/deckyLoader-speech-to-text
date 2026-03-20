@@ -25,6 +25,12 @@ cd "$PLUGIN_DIR"
 npm install
 npm run build
 
+echo "==> Bundling Python dependencies into lib/..."
+rm -rf "$PLUGIN_DIR/lib"
+# Pin to 3.11.x: newer versions pull audioop-lts (cp313-abi3 binary) which is
+# incompatible with Decky's embedded Python 3.11 (which has audioop built-in).
+pip3 install --target="$PLUGIN_DIR/lib" --no-compile "SpeechRecognition<3.12"
+
 echo "==> Installing to $INSTALL_DIR (requires sudo)..."
 /usr/bin/sudo rm -rf "$INSTALL_DIR"
 /usr/bin/sudo mkdir -p "$INSTALL_DIR"
@@ -32,6 +38,7 @@ echo "==> Installing to $INSTALL_DIR (requires sudo)..."
 /usr/bin/sudo cp plugin.json "$INSTALL_DIR/"
 /usr/bin/sudo cp main.py "$INSTALL_DIR/"
 /usr/bin/sudo cp -r dist "$INSTALL_DIR/"
+/usr/bin/sudo cp -r lib "$INSTALL_DIR/"
 
 echo "==> Done! Restart Decky Loader to load the plugin."
 echo "    (Quick Access Menu -> Decky -> ... -> Reload)"

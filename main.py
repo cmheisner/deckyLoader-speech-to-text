@@ -1,7 +1,19 @@
 import decky
+import logging
+import os
+import sys
 import socket
 import subprocess
+
+# Bundle SpeechRecognition with the plugin (Decky's embedded Python won't have it)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
 import speech_recognition as sr
+
+# Persistent backend log (survives session restarts)
+_backend_log_path = os.path.join(os.path.dirname(__file__), "backend.log")
+_file_handler = logging.FileHandler(_backend_log_path)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+decky.logger.addHandler(_file_handler)
 
 
 class Plugin:
