@@ -1,4 +1,5 @@
 import decky
+import socket
 import subprocess
 import speech_recognition as sr
 
@@ -52,10 +53,17 @@ class Plugin:
             decky.logger.warning("No audio data captured")
             return ""
 
+        decky.logger.info(f"Audio captured: {len(raw_data)} bytes — sending to Google")
         try:
             recognizer = sr.Recognizer()
             audio = sr.AudioData(raw_data, sample_rate=16000, sample_width=2)
-            text = recognizer.recognize_google(audio)
+            # Set a 10-second socket timeout so the Google API can't hang forever
+            old_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(10)
+            try:
+                text = recognizer.recognize_google(audio)
+            finally:
+                socket.setdefaulttimeout(old_timeout)
             decky.logger.info(f"Transcribed: {text!r}")
             return text
         except sr.UnknownValueError:

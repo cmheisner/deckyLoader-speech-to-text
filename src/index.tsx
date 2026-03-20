@@ -118,10 +118,14 @@ const FloatingMicButton: FC = () => {
     };
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — only cancel if still actively recording, so we don't
+  // race against stopListening() when the component remounts due to a toast.
   useEffect(() => () => {
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
-    cancelRecording();
+    if (isListeningRef.current) {
+      isListeningRef.current = false;
+      cancelRecording();
+    }
   }, []);
 
   // ── Recording helpers ────────────────────────────────────────────────────────
