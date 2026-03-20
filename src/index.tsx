@@ -14,7 +14,7 @@ import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
 // ── UIComposition — keeps overlay visible when QAM panel is closed ─────────────
 // (Issue 5 in decky-plugin-lessons.md)
 enum UIComposition {
-  Notification = 1,
+  Overlay = 2,
 }
 
 const useUIComposition: ((mode: UIComposition) => void) | undefined =
@@ -99,7 +99,7 @@ let _isListening = false;
 
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
-  useUIComposition?.(UIComposition.Notification);
+  useUIComposition?.(UIComposition.Overlay);
 
   const [settings, setSettings]             = useState<MicSettings>(globalSettings);
   // Initialize from module-level so a remount restores the real current state

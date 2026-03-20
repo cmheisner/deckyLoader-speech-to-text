@@ -27,9 +27,14 @@ npm run build
 
 echo "==> Bundling Python dependencies into lib/..."
 rm -rf "$PLUGIN_DIR/lib"
-# Pin to 3.11.x: newer versions pull audioop-lts (cp313-abi3 binary) which is
-# incompatible with Decky's embedded Python 3.11 (which has audioop built-in).
-pip3 install --target="$PLUGIN_DIR/lib" --no-compile "SpeechRecognition<3.12"
+# SteamOS blocks system-wide pip (PEP 668). Use a temp venv to get pip,
+# then install into lib/ with --target (user venvs bypass the restriction).
+VENV=$(mktemp -d)
+python3 -m venv "$VENV"
+# Decky now embeds Python 3.13, which removed aifc and audioop.
+# SpeechRecognition>=3.12 supports Python 3.13; audioop-lts restores audioop.
+"$VENV/bin/pip" install --target="$PLUGIN_DIR/lib" --no-compile --quiet "SpeechRecognition" "audioop-lts"
+rm -rf "$VENV"
 
 echo "==> Installing to $INSTALL_DIR (requires sudo)..."
 /usr/bin/sudo rm -rf "$INSTALL_DIR"
