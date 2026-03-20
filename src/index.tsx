@@ -1,6 +1,7 @@
 import {
   definePlugin,
   ToggleField,
+  SliderField,
   PanelSection,
   PanelSectionRow,
   staticClasses,
@@ -10,45 +11,96 @@ import React, { useState, useEffect, useRef, FC } from "react";
 import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
 
 // ── Backend callables ─────────────────────────────────────────────────────────
-const typeText         = callable<[text: string], boolean>("type_text");
-const startRecording   = callable<[], boolean>("start_recording");
+const typeText          = callable<[text: string], boolean>("type_text");
+const startRecording    = callable<[], boolean>("start_recording");
 const stopAndTranscribe = callable<[], string>("stop_and_transcribe");
-const cancelRecording  = callable<[], void>("cancel_recording");
+const cancelRecording   = callable<[], void>("cancel_recording");
 
-// ── Module-level shared state (QAM panel ↔ floating button) ──────────────────
-let _timeoutEnabled = true;
-let _setTimeoutEnabledRef: ((v: boolean) => void) | null = null;
-let _visible = true;
-let _setVisibleRef: ((v: boolean) => void) | null = null;
+// ── Settings ──────────────────────────────────────────────────────────────────
+interface MicSettings {
+  visible: boolean;
+  timeoutEnabled: boolean;
+  position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
+  iconSize: number;
+}
+
+const POSITIONS: MicSettings["position"][] = [
+  "top-left",
+  "top-right",
+  "bottom-left",
+  "bottom-right",
+];
+
+const POSITION_STYLES: Record<MicSettings["position"], React.CSSProperties> = {
+  "top-left":     { top: 16, left: 16 },
+  "top-right":    { top: 16, right: 16 },
+  "bottom-left":  { bottom: 16, left: 16 },
+  "bottom-right": { bottom: 80, right: 16 },
+};
+
+const STORAGE_KEY = "decky-stt-settings";
+
+function loadSettings(): MicSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return { ...defaultSettings(), ...JSON.parse(raw) };
+  } catch {}
+  return defaultSettings();
+}
+
+function defaultSettings(): MicSettings {
+  return {
+    visible: true,
+    timeoutEnabled: true,
+    position: "bottom-right",
+    iconSize: 56,
+  };
+}
+
+function saveSettings(s: MicSettings) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+}
+
+// ── Module-level shared state (listeners pattern, like timestamp repo) ────────
+let globalSettings = loadSettings();
+const listeners: Array<(s: MicSettings) => void> = [];
+
+function notifyListeners(s: MicSettings) {
+  listeners.forEach((fn) => fn(s));
+}
 
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
+  const [settings, setSettings] = useState<MicSettings>(globalSettings);
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [timeoutEnabled, setTimeoutEnabled] = useState(_timeoutEnabled);
-  const [visible, setVisible] = useState(_visible);
-  const [pos, setPos] = useState({ x: 24, y: Math.round(window.innerHeight * 0.55) });
 
+  // Ref mirrors isListening so callbacks (setTimeout, etc.) never see stale state
+  const isListeningRef = useRef(false);
   const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const hasMoved = useRef(false);
-  const pointerOrigin = useRef({ x: 0, y: 0 });
-  const posRef = useRef(pos);
-  posRef.current = pos;
 
-  // Keep module-level setters in sync so the QAM panel can update us
+  // Subscribe to settings changes from the QAM panel
   useEffect(() => {
-    _setTimeoutEnabledRef = setTimeoutEnabled;
-    _setVisibleRef = setVisible;
-    return () => { _setTimeoutEnabledRef = null; _setVisibleRef = null; };
+    const listener = (s: MicSettings) => setSettings(s);
+    listeners.push(listener);
+    return () => {
+      const i = listeners.indexOf(listener);
+      if (i >= 0) listeners.splice(i, 1);
+    };
   }, []);
 
-  useEffect(() => { _timeoutEnabled = timeoutEnabled; }, [timeoutEnabled]);
-
+  // If the button is hidden while recording, cancel cleanly
   useEffect(() => {
-    _visible = visible;
-    if (!visible) stopListening();
-  }, [visible]);
+    if (!settings.visible && isListeningRef.current) {
+      cancelListening();
+    }
+  }, [settings.visible]);
+
+  // Cleanup on unmount
+  useEffect(() => () => {
+    if (autoStopRef.current) clearTimeout(autoStopRef.current);
+    cancelRecording();
+  }, []);
 
   // ── Recording helpers ────────────────────────────────────────────────────────
   const clearAutoStop = () => {
@@ -60,7 +112,8 @@ const FloatingMicButton: FC = () => {
 
   const stopListening = async () => {
     clearAutoStop();
-    if (!isListening) return;
+    if (!isListeningRef.current) return;
+    isListeningRef.current = false;
     setIsListening(false);
     setIsTranscribing(true);
     try {
@@ -80,6 +133,7 @@ const FloatingMicButton: FC = () => {
 
   const cancelListening = async () => {
     clearAutoStop();
+    isListeningRef.current = false;
     setIsListening(false);
     setIsTranscribing(false);
     await cancelRecording();
@@ -91,120 +145,115 @@ const FloatingMicButton: FC = () => {
       toaster.toast({ title: "SpeechToText", body: "Failed to start recording. Check mic is connected." });
       return;
     }
+    isListeningRef.current = true;
     setIsListening(true);
-    if (_timeoutEnabled) {
+    if (globalSettings.timeoutEnabled) {
       autoStopRef.current = setTimeout(() => stopListening(), 5000);
     }
   };
 
-  // Cleanup on unmount
-  useEffect(() => () => { clearAutoStop(); cancelRecording(); }, []);
-
-  // ── Drag / tap handlers ─────────────────────────────────────────────────────
-  const onPointerDown = (e: React.PointerEvent) => {
-    hasMoved.current = false;
-    pointerOrigin.current = {
-      x: e.clientX - posRef.current.x,
-      y: e.clientY - posRef.current.y,
-    };
-    containerRef.current?.setPointerCapture(e.pointerId);
-    e.preventDefault();
-  };
-
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (e.buttons === 0) return;
-    hasMoved.current = true;
-    setPos({
-      x: Math.max(0, Math.min(window.innerWidth - 60, e.clientX - pointerOrigin.current.x)),
-      y: Math.max(0, Math.min(window.innerHeight - 60, e.clientY - pointerOrigin.current.y)),
-    });
-  };
-
-  const onPointerUp = () => {
-    if (!hasMoved.current && !isTranscribing) {
-      isListening ? stopListening() : startListening();
-    }
+  // ── Click handler (no drag) ──────────────────────────────────────────────────
+  const onClick = () => {
+    if (isTranscribing) return;
+    isListeningRef.current ? stopListening() : startListening();
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  if (!visible) return null;
+  if (!settings.visible) return null;
 
+  const { iconSize, position } = settings;
+  const iconInnerSize = Math.round(iconSize * 0.39);
   const bgColor = isTranscribing ? "#f39c12" : isListening ? "#e74c3c" : "#1a9fff";
 
   return (
     <div
-      ref={containerRef}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
+      onClick={onClick}
       style={{
         position: "fixed",
-        left: pos.x,
-        top: pos.y,
-        width: 56,
-        height: 56,
+        zIndex: 9999,
+        width: iconSize,
+        height: iconSize,
         borderRadius: "50%",
         background: bgColor,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        cursor: isTranscribing ? "wait" : "grab",
-        zIndex: 9999,
+        cursor: isTranscribing ? "wait" : "pointer",
         boxShadow: isListening
           ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
           : "0 3px 16px rgba(0,0,0,0.55)",
         transition: "background 0.15s, box-shadow 0.2s",
-        touchAction: "none",
         userSelect: "none",
         WebkitUserSelect: "none",
+        ...POSITION_STYLES[position as MicSettings["position"]],
       }}
     >
       {isListening || isTranscribing ? (
-        <FaMicrophone color="white" size={22} />
+        <FaMicrophone color="white" size={iconInnerSize} />
       ) : (
-        <FaMicrophoneSlash color="white" size={22} />
+        <FaMicrophoneSlash color="white" size={iconInnerSize} />
       )}
     </div>
   );
 };
 
 // ── QAM settings panel ────────────────────────────────────────────────────────
-const Content: FC = () => {
-  const [timeoutEnabled, setTimeoutEnabled] = useState(_timeoutEnabled);
-  const [visible, setVisible] = useState(_visible);
+const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
+  const [settings, setSettings] = useState<MicSettings>(() => globalSettings);
 
-  const handleTimeoutChange = (val: boolean) => {
-    setTimeoutEnabled(val);
-    _timeoutEnabled = val;
-    if (_setTimeoutEnabledRef) _setTimeoutEnabledRef(val);
+  const update = (patch: Partial<MicSettings>) => {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    saveSettings(next);
+    globalSettings = next;
+    onUpdate(next);
   };
 
-  const handleVisibleChange = (val: boolean) => {
-    setVisible(val);
-    _visible = val;
-    if (_setVisibleRef) _setVisibleRef(val);
-  };
+  const posIdx = Math.max(0, POSITIONS.indexOf(settings.position));
 
   return (
     <PanelSection title="SpeechToText">
       <PanelSectionRow>
         <ToggleField
           label="Show microphone button"
-          description={visible ? "Floating mic button is visible" : "Floating mic button is hidden"}
-          checked={visible}
-          onChange={handleVisibleChange}
+          description={settings.visible ? "Floating mic button is visible" : "Floating mic button is hidden"}
+          checked={settings.visible}
+          onChange={(v) => update({ visible: v })}
         />
       </PanelSectionRow>
+
       <PanelSectionRow>
         <ToggleField
           label="Auto-stop after 5 seconds"
           description={
-            timeoutEnabled
-              ? "Mic turns off automatically after 5 s of silence"
+            settings.timeoutEnabled
+              ? "Mic turns off automatically after 5 s"
               : "Mic stays on until you tap the bubble again"
           }
-          checked={timeoutEnabled}
-          onChange={handleTimeoutChange}
+          checked={settings.timeoutEnabled}
+          onChange={(v) => update({ timeoutEnabled: v })}
+        />
+      </PanelSectionRow>
+
+      <PanelSectionRow>
+        <SliderField
+          label={`Icon Size: ${settings.iconSize}px`}
+          value={settings.iconSize}
+          min={32}
+          max={80}
+          step={4}
+          onChange={(v) => update({ iconSize: v })}
+        />
+      </PanelSectionRow>
+
+      <PanelSectionRow>
+        <SliderField
+          label={`Position: ${settings.position}`}
+          value={posIdx}
+          min={0}
+          max={POSITIONS.length - 1}
+          step={1}
+          onChange={(v) => update({ position: POSITIONS[v] })}
         />
       </PanelSectionRow>
     </PanelSection>
@@ -213,11 +262,12 @@ const Content: FC = () => {
 
 // ── Plugin entry point ────────────────────────────────────────────────────────
 export default definePlugin(() => {
+  globalSettings = loadSettings();
   routerHook.addGlobalComponent("SpeechToTextBubble", FloatingMicButton);
 
   return {
     title: <div className={staticClasses.Title}>SpeechToText</div>,
-    content: <Content />,
+    content: <Content onUpdate={notifyListeners} />,
     icon: <FaMicrophone />,
     onDismount() {
       routerHook.removeGlobalComponent("SpeechToTextBubble");
