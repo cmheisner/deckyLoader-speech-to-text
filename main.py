@@ -5,7 +5,6 @@ import speech_recognition as sr
 
 class Plugin:
     _recording_process = None
-    _target_window_id: str | None = None
 
     async def _main(self):
         decky.logger.info("VoiceType plugin loaded")
@@ -15,27 +14,11 @@ class Plugin:
         decky.logger.info("VoiceType plugin unloaded")
 
     async def start_recording(self) -> bool:
-        """Start capturing audio from the default microphone via parecord.
-        Also snapshots the currently focused X11 window so we can type into it
-        later — by the time transcription finishes, Steam may have stolen focus.
-        """
+        """Start capturing audio from the default microphone via parecord."""
         try:
             if self._recording_process:
                 self._recording_process.terminate()
                 self._recording_process = None
-
-            # Snapshot the focused window before recording so type_text can
-            # target it explicitly, even if focus shifts during transcription.
-            try:
-                result = subprocess.run(
-                    ["xdotool", "getactivewindow"],
-                    capture_output=True, text=True, timeout=2
-                )
-                self._target_window_id = result.stdout.strip() if result.returncode == 0 else None
-                decky.logger.info(f"Target window: {self._target_window_id}")
-            except Exception as e:
-                self._target_window_id = None
-                decky.logger.warning(f"Could not get active window: {e}")
 
             self._recording_process = subprocess.Popen(
                 ["parecord", "--raw", "--channels=1", "--rate=16000", "--format=s16le"],
@@ -96,19 +79,14 @@ class Plugin:
             self._recording_process = None
 
     async def type_text(self, text: str) -> bool:
-        """Types the given text using xdotool, targeting the window that was
-        focused when recording started (so it works even if Steam stole focus
-        during transcription).
-        """
+        """Type text at the current cursor position using xdotool."""
         try:
-            decky.logger.info(f"VoiceType typing: {text!r} into window {self._target_window_id!r}")
-
-            cmd = ["xdotool", "type", "--clearmodifiers", "--delay", "12"]
-            if self._target_window_id:
-                cmd += ["--window", self._target_window_id]
-            cmd += ["--", text]
-
-            subprocess.run(cmd, check=True, timeout=15)
+            decky.logger.info(f"VoiceType typing: {text!r}")
+            subprocess.run(
+                ["xdotool", "type", "--clearmodifiers", "--delay", "12", "--", text],
+                check=True,
+                timeout=15,
+            )
             return True
         except FileNotFoundError:
             decky.logger.error("xdotool not found. Install with: sudo pacman -S xdotool")

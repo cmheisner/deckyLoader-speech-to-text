@@ -95,8 +95,7 @@ function notifyListeners(s: MicSettings) {
 // Recording state lives at module level so a component remount (which resets
 // useState to its initial value) re-reads the real current state instead of
 // always starting at false.
-let _isListening    = false;
-let _isTranscribing = false;
+let _isListening = false;
 
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
@@ -104,8 +103,7 @@ const FloatingMicButton: FC = () => {
 
   const [settings, setSettings]             = useState<MicSettings>(globalSettings);
   // Initialize from module-level so a remount restores the real current state
-  const [isListening, setIsListening]       = useState(() => _isListening);
-  const [isTranscribing, setIsTranscribing] = useState(() => _isTranscribing);
+  const [isListening, setIsListening] = useState(() => _isListening);
 
   const isListeningRef = useRef(_isListening);
   const autoStopRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -138,24 +136,22 @@ const FloatingMicButton: FC = () => {
     clearAutoStop();
     if (!isListeningRef.current) return;
     isListeningRef.current = false;
-    _isListening    = false;
-    _isTranscribing = true;
+    _isListening = false;
     setIsListening(false);
-    setIsTranscribing(true);
     toaster.toast({ title: "SpeechToText", body: "Recording stopped" });
     try {
       const transcript = await stopAndTranscribe();
       if (transcript) {
+        toaster.toast({ title: "SpeechToText", body: `Heard: "${transcript}"` });
         const ok = await typeText(transcript + " ");
         if (!ok) {
           toaster.toast({ title: "SpeechToText", body: "Failed to type text. Is xdotool installed?" });
         }
+      } else {
+        toaster.toast({ title: "SpeechToText", body: "Nothing heard" });
       }
     } catch (e: any) {
       toaster.toast({ title: "SpeechToText", body: `Transcription error: ${e?.message ?? e}` });
-    } finally {
-      _isTranscribing = false;
-      setIsTranscribing(false);
     }
   };
 
@@ -191,11 +187,9 @@ const FloatingMicButton: FC = () => {
   // global component context — Steam's input layer can swallow click events.
   const onPointerUp = (e: React.PointerEvent) => {
     e.stopPropagation();
-    if (isTranscribing) return;
     if (isListeningRef.current) {
       stopListening();
     } else {
-      toaster.toast({ title: "SpeechToText", body: "Starting recording..." });
       startListening();
     }
   };
@@ -205,7 +199,7 @@ const FloatingMicButton: FC = () => {
 
   const { iconSize, position } = settings;
   const iconInnerSize = Math.round(iconSize * 0.39);
-  const bgColor = isTranscribing ? "#f39c12" : isListening ? "#e74c3c" : "#1a9fff";
+  const bgColor = isListening ? "#e74c3c" : "#1a9fff";
 
   return (
     <div
@@ -231,7 +225,7 @@ const FloatingMicButton: FC = () => {
         ...POSITION_STYLES[position as MicSettings["position"]],
       }}
     >
-      {isListening || isTranscribing ? (
+      {isListening ? (
         <FaMicrophone color="white" size={iconInnerSize} />
       ) : (
         <FaMicrophoneSlash color="white" size={iconInnerSize} />
