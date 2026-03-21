@@ -1,5 +1,6 @@
 import {
   definePlugin,
+  findModuleChild,
   ToggleField,
   SliderField,
   PanelSection,
@@ -9,6 +10,29 @@ import {
 import { callable, toaster, routerHook } from "@decky/api";
 import React, { useState, useEffect, useRef, FC } from "react";
 import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
+
+// ── UIComposition — keeps overlay click-through in gaming mode ────────────────
+// Overlay (2) is a passive overlay that doesn't trigger Steam's input-capture
+// mode. Notification (1) was causing Steam to block input to other apps.
+enum UIComposition {
+  Overlay = 2,
+}
+
+const useUIComposition: ((mode: UIComposition) => void) | undefined =
+  findModuleChild((m: Record<string, unknown>) => {
+    if (typeof m !== "object" || m === null) return undefined;
+    for (const prop in m) {
+      if (
+        typeof m[prop] === "function" &&
+        (m[prop] as Function).toString().includes("AddMinimumCompositionStateRequest") &&
+        (m[prop] as Function).toString().includes("ChangeMinimumCompositionStateRequest") &&
+        (m[prop] as Function).toString().includes("RemoveMinimumCompositionStateRequest") &&
+        !(m[prop] as Function).toString().includes("m_mapCompositionStateRequests")
+      ) {
+        return m[prop] as (mode: UIComposition) => void;
+      }
+    }
+  });
 
 // ── Backend callables ─────────────────────────────────────────────────────────
 const typeText          = callable<[text: string], boolean>("type_text");
@@ -76,6 +100,8 @@ let _isListening = false;
 
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
+  useUIComposition?.(UIComposition.Overlay);
+
   const [settings, setSettings]             = useState<MicSettings>(globalSettings);
   // Initialize from module-level so a remount restores the real current state
   const [isListening, setIsListening] = useState(() => _isListening);
