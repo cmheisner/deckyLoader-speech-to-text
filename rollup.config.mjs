@@ -4,7 +4,7 @@ const config = deckyPlugin();
 config.output = {
   ...config.output,
   format: "iife",
-  name: "Plugin",
+  name: "plugin_export",
   globals: {
     react: "SP_REACT",
     "react-dom": "SP_REACTDOM",

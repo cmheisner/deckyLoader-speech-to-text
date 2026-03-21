@@ -5,6 +5,7 @@ import {
   SliderField,
   PanelSection,
   PanelSectionRow,
+  ButtonItem,
   staticClasses,
 } from "@decky/ui";
 import { callable, toaster, routerHook } from "@decky/api";
@@ -12,8 +13,6 @@ import React, { useState, useEffect, useRef, FC } from "react";
 import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
 
 // ── UIComposition — keeps overlay click-through in gaming mode ────────────────
-// Overlay (2) is a passive overlay that doesn't trigger Steam's input-capture
-// mode. Notification (1) was causing Steam to block input to other apps.
 enum UIComposition {
   Overlay = 2,
 }
@@ -35,10 +34,14 @@ const useUIComposition: ((mode: UIComposition) => void) | undefined =
   });
 
 // ── Backend callables ─────────────────────────────────────────────────────────
-const typeText          = callable<[text: string], boolean>("type_text");
-const startRecording    = callable<[], boolean>("start_recording");
+// start_recording / type_text return '' on success, or an error string.
+// stop_and_transcribe returns the transcript, '' if nothing heard, or 'ERROR: …'.
+// check_tools returns a diagnostic string.
+const startRecording    = callable<[], string>("start_recording");
 const stopAndTranscribe = callable<[], string>("stop_and_transcribe");
 const cancelRecording   = callable<[], void>("cancel_recording");
+const typeText          = callable<[text: string], string>("type_text");
+const checkTools        = callable<[], string>("check_tools");
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 interface MicSettings {
@@ -93,17 +96,15 @@ function notifyListeners(s: MicSettings) {
   listeners.forEach((fn) => fn(s));
 }
 
-// Recording state lives at module level so a component remount (which resets
-// useState to its initial value) re-reads the real current state instead of
-// always starting at false.
+// Recording state lives at module level so a component remount restores the
+// real current state instead of always resetting to false.
 let _isListening = false;
 
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
   useUIComposition?.(UIComposition.Overlay);
 
-  const [settings, setSettings]             = useState<MicSettings>(globalSettings);
-  // Initialize from module-level so a remount restores the real current state
+  const [settings, setSettings] = useState<MicSettings>(globalSettings);
   const [isListening, setIsListening] = useState(() => _isListening);
 
   const isListeningRef = useRef(_isListening);
@@ -119,8 +120,7 @@ const FloatingMicButton: FC = () => {
     };
   }, []);
 
-  // Cleanup on unmount — only cancel if still actively recording, so we don't
-  // race against stopListening() when the component remounts due to a toast.
+  // Cleanup on unmount — only cancel if still actively recording
   useEffect(() => () => {
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
     if (isListeningRef.current) {
@@ -143,45 +143,77 @@ const FloatingMicButton: FC = () => {
     isListeningRef.current = false;
     _isListening = false;
     setIsListening(false);
-    toaster.toast({ title: "SpeechToText", body: "Recording stopped" });
+
+    toaster.toast({ title: "SpeechToText", body: "Stopped — transcribing…" });
+
+    let transcript: string;
     try {
-      const transcript = await stopAndTranscribe();
-      if (transcript) {
-        toaster.toast({ title: "SpeechToText", body: `Heard: "${transcript}"` });
-        const ok = await typeText(transcript + " ");
-        if (!ok) {
-          toaster.toast({ title: "SpeechToText", body: "Failed to type text. Is xdotool installed?" });
-        }
-      } else {
-        toaster.toast({ title: "SpeechToText", body: "Nothing heard" });
-      }
+      transcript = await stopAndTranscribe();
     } catch (e: any) {
-      toaster.toast({ title: "SpeechToText", body: `Transcription error: ${e?.message ?? e}` });
+      toaster.toast({ title: "SpeechToText", body: `Transcription call failed: ${e?.message ?? e}` });
+      return;
     }
+
+    // Backend signals errors with the 'ERROR: ' prefix
+    if (transcript.startsWith("ERROR:")) {
+      toaster.toast({ title: "SpeechToText", body: transcript.replace(/^ERROR:\s*/, "") });
+      return;
+    }
+
+    if (!transcript) {
+      toaster.toast({ title: "SpeechToText", body: "Nothing heard — try speaking louder" });
+      return;
+    }
+
+    toaster.toast({ title: "SpeechToText", body: `Heard: "${transcript}"` });
+
+    let typeResult: string;
+    try {
+      typeResult = await typeText(transcript + " ");
+    } catch (e: any) {
+      toaster.toast({ title: "SpeechToText", body: `Type call failed: ${e?.message ?? e}` });
+      return;
+    }
+
+    if (typeResult === "CLIPBOARD") {
+      toaster.toast({
+        title: "SpeechToText",
+        body: `Copied to clipboard! Paste with Ctrl+V\n"${transcript}"`,
+      });
+    } else if (typeResult.startsWith("ERROR:")) {
+      toaster.toast({ title: "SpeechToText", body: typeResult.replace(/^ERROR:\s*/, "") });
+    }
+    // Empty string = success — already shown "Heard: …" toast above
   };
 
   const startListening = async () => {
-    // Set state synchronously before the await so the button turns red
-    // immediately, and a remount during the async call re-reads _isListening=true
     _isListening = true;
     isListeningRef.current = true;
     setIsListening(true);
+
+    toaster.toast({ title: "SpeechToText", body: "Starting mic…" });
+
+    let errMsg: string;
     try {
-      const ok = await startRecording();
-      if (!ok) {
-        _isListening = false;
-        isListeningRef.current = false;
-        setIsListening(false);
-        toaster.toast({ title: "SpeechToText", body: "Failed to start recording. Check mic is connected." });
-        return;
-      }
+      errMsg = await startRecording();
     } catch (e: any) {
       _isListening = false;
       isListeningRef.current = false;
       setIsListening(false);
-      toaster.toast({ title: "SpeechToText", body: `Recording error: ${e?.message ?? e}` });
+      toaster.toast({ title: "SpeechToText", body: `Mic call failed: ${e?.message ?? e}` });
       return;
     }
+
+    if (errMsg) {
+      _isListening = false;
+      isListeningRef.current = false;
+      setIsListening(false);
+      toaster.toast({ title: "SpeechToText", body: `Mic error: ${errMsg}` });
+      return;
+    }
+
+    toaster.toast({ title: "SpeechToText", body: "Listening… tap to stop" });
+
     if (globalSettings.timeoutEnabled) {
       autoStopRef.current = setTimeout(() => stopListening(), 5000);
     }
@@ -242,6 +274,7 @@ const FloatingMicButton: FC = () => {
 // ── QAM settings panel ────────────────────────────────────────────────────────
 const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
   const [settings, setSettings] = useState<MicSettings>(() => globalSettings);
+  const [diagRunning, setDiagRunning] = useState(false);
 
   const update = (patch: Partial<MicSettings>) => {
     const next = { ...settings, ...patch };
@@ -249,6 +282,23 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
     saveSettings(next);
     globalSettings = next;
     onUpdate(next);
+  };
+
+  const runDiagnostics = async () => {
+    setDiagRunning(true);
+    toaster.toast({ title: "SpeechToText", body: "Running diagnostics…" });
+    try {
+      const result = await checkTools();
+      // Split the pipe-delimited result into individual toasts so each line is readable
+      const parts = result.split(" | ");
+      for (const part of parts) {
+        toaster.toast({ title: "STT Diagnostics", body: part });
+      }
+    } catch (e: any) {
+      toaster.toast({ title: "SpeechToText", body: `Diagnostics failed: ${e?.message ?? e}` });
+    } finally {
+      setDiagRunning(false);
+    }
   };
 
   const posIdx = Math.max(0, POSITIONS.indexOf(settings.position));
@@ -297,6 +347,16 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
           step={1}
           onChange={(v: number) => update({ position: POSITIONS[v] })}
         />
+      </PanelSectionRow>
+
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          onClick={runDiagnostics}
+          disabled={diagRunning}
+        >
+          {diagRunning ? "Running…" : "Run Diagnostics"}
+        </ButtonItem>
       </PanelSectionRow>
     </PanelSection>
   );
