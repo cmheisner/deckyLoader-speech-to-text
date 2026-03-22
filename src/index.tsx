@@ -46,7 +46,6 @@ const checkTools        = callable<[], string>("check_tools");
 // ── Settings ──────────────────────────────────────────────────────────────────
 interface MicSettings {
   visible: boolean;
-  timeoutEnabled: boolean;
   position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
   iconSize: number;
 }
@@ -70,7 +69,6 @@ const STORAGE_KEY = "decky-stt-settings";
 function defaultSettings(): MicSettings {
   return {
     visible: true,
-    timeoutEnabled: true,
     position: "bottom-right",
     iconSize: 56,
   };
@@ -100,6 +98,22 @@ function notifyListeners(s: MicSettings) {
 // real current state instead of always resetting to false.
 let _isListening = false;
 
+// Last transcript — persisted in localStorage so it survives module re-evaluation
+const TRANSCRIPT_KEY = "decky-stt-transcript";
+
+function loadTranscript(): string {
+  try { return localStorage.getItem(TRANSCRIPT_KEY) ?? ""; } catch { return ""; }
+}
+
+let _lastTranscript = loadTranscript();
+const transcriptListeners: Array<(t: string) => void> = [];
+
+function setGlobalTranscript(t: string) {
+  _lastTranscript = t;
+  try { localStorage.setItem(TRANSCRIPT_KEY, t); } catch {}
+  transcriptListeners.forEach((fn) => fn(t));
+}
+
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
   useUIComposition?.(UIComposition.Overlay);
@@ -108,7 +122,6 @@ const FloatingMicButton: FC = () => {
   const [isListening, setIsListening] = useState(() => _isListening);
 
   const isListeningRef = useRef(_isListening);
-  const autoStopRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Subscribe to settings changes pushed from the QAM panel
   useEffect(() => {
@@ -122,7 +135,6 @@ const FloatingMicButton: FC = () => {
 
   // Cleanup on unmount — only cancel if still actively recording
   useEffect(() => () => {
-    if (autoStopRef.current) clearTimeout(autoStopRef.current);
     if (isListeningRef.current) {
       isListeningRef.current = false;
       cancelRecording();
@@ -130,15 +142,7 @@ const FloatingMicButton: FC = () => {
   }, []);
 
   // ── Recording helpers ────────────────────────────────────────────────────────
-  const clearAutoStop = () => {
-    if (autoStopRef.current) {
-      clearTimeout(autoStopRef.current);
-      autoStopRef.current = null;
-    }
-  };
-
   const stopListening = async () => {
-    clearAutoStop();
     if (!isListeningRef.current) return;
     isListeningRef.current = false;
     _isListening = false;
@@ -150,22 +154,28 @@ const FloatingMicButton: FC = () => {
     try {
       transcript = await stopAndTranscribe();
     } catch (e: any) {
-      toaster.toast({ title: "SpeechToText", body: `Transcription call failed: ${e?.message ?? e}` });
+      const msg = `Call failed: ${e?.message ?? e}`;
+      toaster.toast({ title: "SpeechToText", body: msg });
+      setGlobalTranscript(`⚠ ${msg}`);
       return;
     }
 
     // Backend signals errors with the 'ERROR: ' prefix
     if (transcript.startsWith("ERROR:")) {
-      toaster.toast({ title: "SpeechToText", body: transcript.replace(/^ERROR:\s*/, "") });
+      const msg = transcript.replace(/^ERROR:\s*/, "");
+      toaster.toast({ title: "SpeechToText", body: msg });
+      setGlobalTranscript(`⚠ ${msg}`);
       return;
     }
 
     if (!transcript) {
       toaster.toast({ title: "SpeechToText", body: "Nothing heard — try speaking louder" });
+      setGlobalTranscript("(nothing heard)");
       return;
     }
 
     toaster.toast({ title: "SpeechToText", body: `Heard: "${transcript}"` });
+    setGlobalTranscript(transcript);
 
     let typeResult: string;
     try {
@@ -213,10 +223,7 @@ const FloatingMicButton: FC = () => {
     }
 
     toaster.toast({ title: "SpeechToText", body: "Listening… tap to stop" });
-
-    if (globalSettings.timeoutEnabled) {
-      autoStopRef.current = setTimeout(() => stopListening(), 5000);
-    }
+    setGlobalTranscript("🎙 Listening…");
   };
 
   // ── Tap handler ──────────────────────────────────────────────────────────────
@@ -275,6 +282,16 @@ const FloatingMicButton: FC = () => {
 const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
   const [settings, setSettings] = useState<MicSettings>(() => globalSettings);
   const [diagRunning, setDiagRunning] = useState(false);
+  const [transcript, setTranscript] = useState(() => _lastTranscript);
+
+  // Keep transcript display in sync with the floating button
+  useEffect(() => {
+    transcriptListeners.push(setTranscript);
+    return () => {
+      const i = transcriptListeners.indexOf(setTranscript);
+      if (i >= 0) transcriptListeners.splice(i, 1);
+    };
+  }, []);
 
   const update = (patch: Partial<MicSettings>) => {
     const next = { ...settings, ...patch };
@@ -304,26 +321,43 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
   const posIdx = Math.max(0, POSITIONS.indexOf(settings.position));
 
   return (
-    <PanelSection title="SpeechToText">
+    <>
+    <PanelSection title="Last Transcript">
+      <PanelSectionRow>
+        <div style={{
+          background: "rgba(255,255,255,0.07)",
+          border: "1px solid rgba(255,255,255,0.15)",
+          borderRadius: 6,
+          padding: "10px 12px",
+          minHeight: 56,
+          fontSize: 14,
+          lineHeight: 1.5,
+          wordBreak: "break-word",
+          color: transcript ? "#ffffff" : "rgba(255,255,255,0.35)",
+          width: "100%",
+        }}>
+          {transcript || "Tap the mic button — text appears here"}
+        </div>
+      </PanelSectionRow>
+      {transcript ? (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={() => { setGlobalTranscript(""); }}
+          >
+            Clear
+          </ButtonItem>
+        </PanelSectionRow>
+      ) : null}
+    </PanelSection>
+
+    <PanelSection title="Settings">
       <PanelSectionRow>
         <ToggleField
           label="Show microphone button"
           description={settings.visible ? "Visible" : "Hidden"}
           checked={settings.visible}
           onChange={(v: boolean) => update({ visible: v })}
-        />
-      </PanelSectionRow>
-
-      <PanelSectionRow>
-        <ToggleField
-          label="Auto-stop after 5 seconds"
-          description={
-            settings.timeoutEnabled
-              ? "Mic turns off automatically after 5 s"
-              : "Mic stays on until you tap the bubble again"
-          }
-          checked={settings.timeoutEnabled}
-          onChange={(v: boolean) => update({ timeoutEnabled: v })}
         />
       </PanelSectionRow>
 
@@ -359,6 +393,7 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
         </ButtonItem>
       </PanelSectionRow>
     </PanelSection>
+    </>
   );
 };
 

@@ -73,10 +73,13 @@ rm -rf "$PLUGIN_DIR/lib"
 # then install into lib/ with --target (user venvs bypass the restriction).
 VENV=$(mktemp -d)
 python3 -m venv "$VENV"
-# Decky now embeds Python 3.13, which removed aifc and audioop.
-# SpeechRecognition>=3.12 supports Python 3.13; audioop-lts restores audioop.
-"$VENV/bin/pip" install --target="$PLUGIN_DIR/lib" --no-compile --quiet "SpeechRecognition" "audioop-lts"
+"$VENV/bin/pip" install --target="$PLUGIN_DIR/lib" --no-compile --quiet "SpeechRecognition"
 rm -rf "$VENV"
+# Decky's PyInstaller-bundled Python does not include audioop.
+# audioop-lts (the PyPI shim) is compiled for Python 3.13 and crashes on 3.11.
+# Remove it and drop in our pure-Python shim instead.
+rm -rf "$PLUGIN_DIR/lib/audioop" "$PLUGIN_DIR/lib/audioop_lts"*.dist-info 2>/dev/null || true
+cp "$PLUGIN_DIR/audioop.py" "$PLUGIN_DIR/lib/audioop.py"
 
 # ── Install to Decky plugins directory ───────────────────────────────────────
 echo "==> Installing to $INSTALL_DIR (requires sudo)..."

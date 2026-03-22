@@ -8,8 +8,7 @@ A Steam Deck DeckyLoader plugin that adds a floating microphone bubble to your s
 - **Floating mic bubble** — always visible, draggable anywhere on screen
 - **Tap to start / tap to stop** — click/tap the bubble to toggle recording
 - **Types text at your cursor** — recognized speech is typed into whatever is currently focused (text fields, chat boxes, browsers, etc.)
-- **Auto-stop timeout toggle** — when enabled, the mic automatically turns off after 5 seconds of silence; when disabled, it keeps listening until you tap again
-
+- **Last transcript display** — the QAM settings panel shows the most recent transcription result
 ## Requirements
 
 - [DeckyLoader](https://github.com/SteamDeckHomebrew/decky-loader) installed on your Steam Deck
@@ -33,7 +32,7 @@ Then in the Steam Deck UI:
 1. The floating mic bubble appears on screen after the plugin loads.
 2. **Tap** the bubble to start listening — it turns red with a pulsing glow.
 3. Speak naturally — your words are typed at the current cursor position.
-4. **Tap again** to stop, or let it auto-stop after 5 seconds (if timeout is enabled).
+4. **Tap again** to stop recording.
 5. Drag the bubble anywhere on screen to reposition it.
 
 ### Settings (QAM Panel)
@@ -42,7 +41,10 @@ Open the Quick Access Menu → Decky → SpeechToText:
 
 | Setting | Description |
 |---|---|
-| Auto-stop after 5 seconds | ON: mic stops after 5 s of silence. OFF: mic stays on until tapped. |
+| Show microphone button | Toggle the floating mic bubble on/off |
+| Icon size | Adjust the size of the mic bubble |
+| Position | Move the bubble to a screen corner |
+| Last Transcript | Shows the most recent speech recognition result |
 
 ## How It Works
 
