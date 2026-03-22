@@ -1,6 +1,5 @@
 import {
   definePlugin,
-  findModuleChild,
   ToggleField,
   SliderField,
   PanelSection,
@@ -11,27 +10,6 @@ import {
 import { callable, toaster, routerHook } from "@decky/api";
 import React, { useState, useEffect, useRef, FC } from "react";
 import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
-
-// ── UIComposition — keeps overlay click-through in gaming mode ────────────────
-enum UIComposition {
-  Overlay = 2,
-}
-
-const useUIComposition: ((mode: UIComposition) => void) | undefined =
-  findModuleChild((m: Record<string, unknown>) => {
-    if (typeof m !== "object" || m === null) return undefined;
-    for (const prop in m) {
-      if (
-        typeof m[prop] === "function" &&
-        (m[prop] as Function).toString().includes("AddMinimumCompositionStateRequest") &&
-        (m[prop] as Function).toString().includes("ChangeMinimumCompositionStateRequest") &&
-        (m[prop] as Function).toString().includes("RemoveMinimumCompositionStateRequest") &&
-        !(m[prop] as Function).toString().includes("m_mapCompositionStateRequests")
-      ) {
-        return m[prop] as (mode: UIComposition) => void;
-      }
-    }
-  });
 
 // ── Backend callables ─────────────────────────────────────────────────────────
 // start_recording / type_text return '' on success, or an error string.
@@ -116,8 +94,6 @@ function setGlobalTranscript(t: string) {
 
 // ── Floating mic button ───────────────────────────────────────────────────────
 const FloatingMicButton: FC = () => {
-  useUIComposition?.(UIComposition.Overlay);
-
   const [settings, setSettings] = useState<MicSettings>(globalSettings);
   const [isListening, setIsListening] = useState(() => _isListening);
 
@@ -245,35 +221,40 @@ const FloatingMicButton: FC = () => {
   const iconInnerSize = Math.round(iconSize * 0.39);
   const bgColor = isListening ? "#e74c3c" : "#1a9fff";
 
+  // Wrap in a full-screen pointer-events:none shell so the overlay container
+  // doesn't swallow mouse/touch input meant for games or other apps.
+  // Only the button itself has pointer-events:auto.
   return (
-    <div
-      onPointerUp={onPointerUp}
-      style={{
-        position: "fixed",
-        zIndex: 9999,
-        width: iconSize,
-        height: iconSize,
-        borderRadius: "50%",
-        background: bgColor,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        boxShadow: isListening
-          ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
-          : "0 3px 16px rgba(0,0,0,0.55)",
-        transition: "background 0.15s, box-shadow 0.2s",
-        touchAction: "none",
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        ...POSITION_STYLES[position as MicSettings["position"]],
-      }}
-    >
-      {isListening ? (
-        <FaMicrophone color="white" size={iconInnerSize} />
-      ) : (
-        <FaMicrophoneSlash color="white" size={iconInnerSize} />
-      )}
+    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 9999 }}>
+      <div
+        onPointerUp={onPointerUp}
+        style={{
+          position: "absolute",
+          pointerEvents: "auto",
+          width: iconSize,
+          height: iconSize,
+          borderRadius: "50%",
+          background: bgColor,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          boxShadow: isListening
+            ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
+            : "0 3px 16px rgba(0,0,0,0.55)",
+          transition: "background 0.15s, box-shadow 0.2s",
+          touchAction: "none",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          ...POSITION_STYLES[position as MicSettings["position"]],
+        }}
+      >
+        {isListening ? (
+          <FaMicrophone color="white" size={iconInnerSize} />
+        ) : (
+          <FaMicrophoneSlash color="white" size={iconInnerSize} />
+        )}
+      </div>
     </div>
   );
 };
@@ -283,6 +264,7 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
   const [settings, setSettings] = useState<MicSettings>(() => globalSettings);
   const [diagRunning, setDiagRunning] = useState(false);
   const [transcript, setTranscript] = useState(() => _lastTranscript);
+  const [copied, setCopied] = useState(false);
 
   // Keep transcript display in sync with the floating button
   useEffect(() => {
@@ -340,14 +322,29 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
         </div>
       </PanelSectionRow>
       {transcript ? (
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            onClick={() => { setGlobalTranscript(""); }}
-          >
-            Clear
-          </ButtonItem>
-        </PanelSectionRow>
+        <>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={() => {
+                navigator.clipboard?.writeText(transcript).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                });
+              }}
+            >
+              {copied ? "Copied!" : "Copy to Clipboard"}
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={() => { setGlobalTranscript(""); }}
+            >
+              Clear
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
       ) : null}
     </PanelSection>
 
