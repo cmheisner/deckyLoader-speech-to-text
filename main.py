@@ -4,6 +4,7 @@ import os
 import sys
 import socket
 import subprocess
+import tempfile
 
 # Bundle SpeechRecognition with the plugin (Decky's embedded Python won't have it)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
@@ -60,6 +61,7 @@ def _user_env() -> dict:
 
 class Plugin:
     _recording_process = None
+    _audio_tmp = None
 
     async def _main(self):
         decky.logger.info("SpeechToText plugin loaded")
@@ -79,6 +81,9 @@ class Plugin:
             if self._recording_process:
                 self._recording_process.terminate()
                 self._recording_process = None
+            if self._audio_tmp and os.path.exists(self._audio_tmp):
+                os.unlink(self._audio_tmp)
+                self._audio_tmp = None
 
             env = _user_env()
             decky.logger.info(
@@ -86,10 +91,13 @@ class Plugin:
                 f"XDG_RUNTIME_DIR={env['XDG_RUNTIME_DIR']}"
             )
 
+            # Write to a temp file instead of stdout so the 64 KB pipe buffer
+            # doesn't cap recordings at ~2 seconds.
+            self._audio_tmp = tempfile.mktemp(suffix=".raw")
             self._recording_process = subprocess.Popen(
-                ["parecord", "--raw", "--channels=1", "--rate=16000", "--format=s16le"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,   # capture stderr so errors are visible
+                ["parecord", "--raw", "--channels=1", "--rate=16000", "--format=s16le",
+                 self._audio_tmp],
+                stderr=subprocess.PIPE,
                 env=env,
             )
 
@@ -118,7 +126,9 @@ class Plugin:
         Returns '' if nothing was heard, 'ERROR: ...' on failure.
         """
         proc = self._recording_process
+        audio_tmp = self._audio_tmp
         self._recording_process = None
+        self._audio_tmp = None
 
         if not proc:
             decky.logger.warning("stop_and_transcribe: no recording in progress")
@@ -126,7 +136,7 @@ class Plugin:
 
         try:
             proc.terminate()
-            raw_data, stderr_data = proc.communicate(timeout=3)
+            _, stderr_data = proc.communicate(timeout=3)
         except Exception as e:
             decky.logger.error(f"Error stopping recording: {e}")
             try:
@@ -139,6 +149,18 @@ class Plugin:
             stderr_str = stderr_data.decode(errors="replace").strip()
             if stderr_str:
                 decky.logger.info(f"parecord stderr: {stderr_str}")
+
+        try:
+            with open(audio_tmp, "rb") as f:
+                raw_data = f.read()
+        except Exception as e:
+            decky.logger.error(f"Failed to read audio file: {e}")
+            return f"ERROR: Failed to read audio: {e}"
+        finally:
+            try:
+                os.unlink(audio_tmp)
+            except Exception:
+                pass
 
         if not raw_data:
             decky.logger.warning("No audio data captured")
@@ -177,6 +199,12 @@ class Plugin:
             except Exception:
                 self._recording_process.kill()
             self._recording_process = None
+        if self._audio_tmp:
+            try:
+                os.unlink(self._audio_tmp)
+            except Exception:
+                pass
+            self._audio_tmp = None
 
     # ── Text injection ────────────────────────────────────────────────────────
 

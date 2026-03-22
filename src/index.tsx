@@ -176,8 +176,6 @@ const FloatingMicButton: FC = () => {
     isListeningRef.current = true;
     setIsListening(true);
 
-    toaster.toast({ title: "SpeechToText", body: "Starting mic…" });
-
     let errMsg: string;
     try {
       errMsg = await startRecording();
@@ -197,7 +195,6 @@ const FloatingMicButton: FC = () => {
       return;
     }
 
-    toaster.toast({ title: "SpeechToText", body: "Listening… tap to stop" });
     setGlobalTranscript("🎙 Listening…");
   };
 
