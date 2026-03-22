@@ -150,7 +150,6 @@ const FloatingMicButton: FC = () => {
       return;
     }
 
-    toaster.toast({ title: "SpeechToText", body: `Heard: "${transcript}"` });
     setGlobalTranscript(transcript);
 
     let typeResult: string;
@@ -327,10 +326,29 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
             <ButtonItem
               layout="below"
               onClick={() => {
-                navigator.clipboard?.writeText(transcript).then(() => {
+                // execCommand is synchronous and works in the Steam overlay
+                // Chromium context without needing clipboard permissions.
+                const el = document.createElement("textarea");
+                el.value = transcript;
+                el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+                document.body.appendChild(el);
+                el.focus();
+                el.select();
+                const ok = document.execCommand("copy");
+                document.body.removeChild(el);
+
+                if (ok) {
                   setCopied(true);
                   setTimeout(() => setCopied(false), 2000);
-                });
+                } else {
+                  // execCommand failed — try async API
+                  navigator.clipboard?.writeText(transcript).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }).catch(() => {
+                    toaster.toast({ title: "SpeechToText", body: "Copy failed — try the Clear button and retype" });
+                  });
+                }
               }}
             >
               {copied ? "Copied!" : "Copy to Clipboard"}
