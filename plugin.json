@@ -2,6 +2,7 @@
   "name": "SpeechToText",
   "author": "cheisner",
   "flags": [],
+  "api_version": 1,
   "publish": {
     "description": "Floating microphone bubble for speech-to-text input on Steam Deck. Tap to start recording, tap again to stop. Text is typed wherever your cursor is focused.",
     "image": ""
