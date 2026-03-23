@@ -9,7 +9,7 @@ import {
 } from "@decky/ui";
 import { callable, toaster, routerHook } from "@decky/api";
 import React, { useState, useEffect, useRef, FC } from "react";
-import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
+import { FaMicrophone, FaMicrophoneSlash, FaSpinner } from "react-icons/fa";
 
 // ── Backend callables ─────────────────────────────────────────────────────────
 // start_recording / type_text return '' on success, or an error string.
@@ -96,8 +96,17 @@ function setGlobalTranscript(t: string) {
 const FloatingMicButton: FC = () => {
   const [settings, setSettings] = useState<MicSettings>(globalSettings);
   const [isListening, setIsListening] = useState(() => _isListening);
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   const isListeningRef = useRef(_isListening);
+
+  // Inject keyframe animation for the transcribing spinner
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = "@keyframes stt-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }";
+    document.head.appendChild(style);
+    return () => { document.head.removeChild(style); };
+  }, []);
 
   // Subscribe to settings changes pushed from the QAM panel
   useEffect(() => {
@@ -123,18 +132,19 @@ const FloatingMicButton: FC = () => {
     isListeningRef.current = false;
     _isListening = false;
     setIsListening(false);
-
-    toaster.toast({ title: "SpeechToText", body: "Stopped — transcribing…" });
+    setIsTranscribing(true);
 
     let transcript: string;
     try {
       transcript = await stopAndTranscribe();
     } catch (e: any) {
+      setIsTranscribing(false);
       const msg = `Call failed: ${e?.message ?? e}`;
       toaster.toast({ title: "SpeechToText", body: msg });
       setGlobalTranscript(`⚠ ${msg}`);
       return;
     }
+    setIsTranscribing(false);
 
     // Backend signals errors with the 'ERROR: ' prefix
     if (transcript.startsWith("ERROR:")) {
@@ -215,7 +225,7 @@ const FloatingMicButton: FC = () => {
 
   const { iconSize, position } = settings;
   const iconInnerSize = Math.round(iconSize * 0.39);
-  const bgColor = isListening ? "#e74c3c" : "#1a9fff";
+  const bgColor = isTranscribing ? "#f39c12" : isListening ? "#e74c3c" : "#1a9fff";
 
   // Wrap in a full-screen pointer-events:none shell so the overlay container
   // doesn't swallow mouse/touch input meant for games or other apps.
@@ -226,7 +236,7 @@ const FloatingMicButton: FC = () => {
         onPointerUp={onPointerUp}
         style={{
           position: "absolute",
-          pointerEvents: "auto",
+          pointerEvents: isTranscribing ? "none" : "auto",
           width: iconSize,
           height: iconSize,
           borderRadius: "50%",
@@ -234,8 +244,10 @@ const FloatingMicButton: FC = () => {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          cursor: "pointer",
-          boxShadow: isListening
+          cursor: isTranscribing ? "default" : "pointer",
+          boxShadow: isTranscribing
+            ? "0 0 0 8px rgba(243,156,18,0.30), 0 3px 16px rgba(0,0,0,0.6)"
+            : isListening
             ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
             : "0 3px 16px rgba(0,0,0,0.55)",
           transition: "background 0.15s, box-shadow 0.2s",
@@ -245,7 +257,11 @@ const FloatingMicButton: FC = () => {
           ...POSITION_STYLES[position as MicSettings["position"]],
         }}
       >
-        {isListening ? (
+        {isTranscribing ? (
+          <div style={{ animation: "stt-spin 1s linear infinite", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <FaSpinner color="white" size={iconInnerSize} />
+          </div>
+        ) : isListening ? (
           <FaMicrophone color="white" size={iconInnerSize} />
         ) : (
           <FaMicrophoneSlash color="white" size={iconInnerSize} />
@@ -259,6 +275,7 @@ const FloatingMicButton: FC = () => {
 const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
   const [settings, setSettings] = useState<MicSettings>(() => globalSettings);
   const [diagRunning, setDiagRunning] = useState(false);
+  const diagAbortRef = useRef(false);
   const [transcript, setTranscript] = useState(() => _lastTranscript);
   const [copied, setCopied] = useState(false);
 
@@ -280,17 +297,21 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
   };
 
   const runDiagnostics = async () => {
+    diagAbortRef.current = false;
     setDiagRunning(true);
     toaster.toast({ title: "SpeechToText", body: "Running diagnostics…" });
     try {
       const result = await checkTools();
+      if (diagAbortRef.current) return;
       // Split the pipe-delimited result into individual toasts so each line is readable
       const parts = result.split(" | ");
       for (const part of parts) {
+        if (diagAbortRef.current) break;
         toaster.toast({ title: "STT Diagnostics", body: part });
       }
     } catch (e: any) {
-      toaster.toast({ title: "SpeechToText", body: `Diagnostics failed: ${e?.message ?? e}` });
+      if (!diagAbortRef.current)
+        toaster.toast({ title: "SpeechToText", body: `Diagnostics failed: ${e?.message ?? e}` });
     } finally {
       setDiagRunning(false);
     }
@@ -398,10 +419,9 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
       <PanelSectionRow>
         <ButtonItem
           layout="below"
-          onClick={runDiagnostics}
-          disabled={diagRunning}
+          onClick={diagRunning ? () => { diagAbortRef.current = true; setDiagRunning(false); } : runDiagnostics}
         >
-          {diagRunning ? "Running…" : "Run Diagnostics"}
+          {diagRunning ? "Stop Diagnostics" : "Run Diagnostics"}
         </ButtonItem>
       </PanelSectionRow>
     </PanelSection>

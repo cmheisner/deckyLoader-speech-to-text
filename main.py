@@ -96,6 +96,7 @@ class Plugin:
             self._audio_tmp = tempfile.mktemp(suffix=".raw")
             self._recording_process = subprocess.Popen(
                 ["parecord", "--raw", "--channels=1", "--rate=16000", "--format=s16le",
+                 "--latency-msec=100",
                  self._audio_tmp],
                 stderr=subprocess.PIPE,
                 env=env,
@@ -135,6 +136,9 @@ class Plugin:
             return "ERROR: No recording in progress"
 
         try:
+            # Allow parecord to drain PulseAudio's kernel buffer before we
+            # terminate it — without this, the last ~200 ms of audio is lost.
+            await asyncio.sleep(0.3)
             proc.terminate()
             _, stderr_data = proc.communicate(timeout=3)
         except Exception as e:
