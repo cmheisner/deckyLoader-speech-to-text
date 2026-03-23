@@ -211,8 +211,10 @@ const FloatingMicButton: FC = () => {
   // ── Tap handler ──────────────────────────────────────────────────────────────
   // onPointerUp + touchAction:none is more reliable than onClick in Decky's
   // global component context — Steam's input layer can swallow click events.
-  const onPointerUp = (e: React.PointerEvent) => {
-    e.stopPropagation();
+  const onPointerUp = () => {
+    // Do not call stopPropagation — in game mode overlay, Steam relies on
+    // pointer events bubbling to the document root to activate input routing.
+    // Blocking propagation can freeze controller/touch/mouse on some pages.
     if (isListeningRef.current) {
       stopListening();
     } else {
@@ -227,46 +229,47 @@ const FloatingMicButton: FC = () => {
   const iconInnerSize = Math.round(iconSize * 0.39);
   const bgColor = isTranscribing ? "#f39c12" : isListening ? "#e74c3c" : "#1a9fff";
 
-  // Wrap in a full-screen pointer-events:none shell so the overlay container
-  // doesn't swallow mouse/touch input meant for games or other apps.
-  // Only the button itself has pointer-events:auto.
+  // Render the button with position:fixed so it only covers its own area —
+  // no full-screen wrapper needed, which avoids interfering with Steam's
+  // gamepad/touch navigation when the in-game overlay or Decky QAM is open.
   return (
-    <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 9999 }}>
-      <div
-        onPointerUp={onPointerUp}
-        style={{
-          position: "absolute",
-          pointerEvents: isTranscribing ? "none" : "auto",
-          width: iconSize,
-          height: iconSize,
-          borderRadius: "50%",
-          background: bgColor,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: isTranscribing ? "default" : "pointer",
-          boxShadow: isTranscribing
-            ? "0 0 0 8px rgba(243,156,18,0.30), 0 3px 16px rgba(0,0,0,0.6)"
-            : isListening
-            ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
-            : "0 3px 16px rgba(0,0,0,0.55)",
-          transition: "background 0.15s, box-shadow 0.2s",
-          touchAction: "none",
-          userSelect: "none",
-          WebkitUserSelect: "none",
-          ...POSITION_STYLES[position as MicSettings["position"]],
-        }}
-      >
-        {isTranscribing ? (
-          <div style={{ animation: "stt-spin 1s linear infinite", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <FaSpinner color="white" size={iconInnerSize} />
-          </div>
-        ) : isListening ? (
-          <FaMicrophone color="white" size={iconInnerSize} />
-        ) : (
-          <FaMicrophoneSlash color="white" size={iconInnerSize} />
-        )}
-      </div>
+    <div
+      onPointerUp={isTranscribing ? undefined : onPointerUp}
+      style={{
+        position: "fixed",
+        zIndex: 9999,
+        pointerEvents: isTranscribing ? "none" : "auto",
+        width: iconSize,
+        height: iconSize,
+        borderRadius: "50%",
+        background: bgColor,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: isTranscribing ? "default" : "pointer",
+        boxShadow: isTranscribing
+          ? "0 0 0 8px rgba(243,156,18,0.30), 0 3px 16px rgba(0,0,0,0.6)"
+          : isListening
+          ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
+          : "0 3px 16px rgba(0,0,0,0.55)",
+        transition: "background 0.15s, box-shadow 0.2s",
+        // "manipulation" allows single taps without interfering with
+        // the overlay's scroll/touch routing in game mode (unlike "none").
+        touchAction: "manipulation",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        ...POSITION_STYLES[position as MicSettings["position"]],
+      }}
+    >
+      {isTranscribing ? (
+        <div style={{ animation: "stt-spin 1s linear infinite", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <FaSpinner color="white" size={iconInnerSize} />
+        </div>
+      ) : isListening ? (
+        <FaMicrophone color="white" size={iconInnerSize} />
+      ) : (
+        <FaMicrophoneSlash color="white" size={iconInnerSize} />
+      )}
     </div>
   );
 };
