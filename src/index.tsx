@@ -19,7 +19,6 @@ const startRecording    = callable<[], string>("start_recording");
 const stopAndTranscribe = callable<[], string>("stop_and_transcribe");
 const cancelRecording   = callable<[], void>("cancel_recording");
 const typeText          = callable<[text: string], string>("type_text");
-const checkTools        = callable<[], string>("check_tools");
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 interface MicSettings {
@@ -277,8 +276,6 @@ const FloatingMicButton: FC = () => {
 // ── QAM settings panel ────────────────────────────────────────────────────────
 const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
   const [settings, setSettings] = useState<MicSettings>(() => globalSettings);
-  const [diagRunning, setDiagRunning] = useState(false);
-  const diagAbortRef = useRef(false);
   const [transcript, setTranscript] = useState(() => _lastTranscript);
   const [copied, setCopied] = useState(false);
 
@@ -297,27 +294,6 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
     saveSettings(next);
     globalSettings = next;
     onUpdate(next);
-  };
-
-  const runDiagnostics = async () => {
-    diagAbortRef.current = false;
-    setDiagRunning(true);
-    toaster.toast({ title: "SpeechToText", body: "Running diagnostics…" });
-    try {
-      const result = await checkTools();
-      if (diagAbortRef.current) return;
-      // Split the pipe-delimited result into individual toasts so each line is readable
-      const parts = result.split(" | ");
-      for (const part of parts) {
-        if (diagAbortRef.current) break;
-        toaster.toast({ title: "STT Diagnostics", body: part });
-      }
-    } catch (e: any) {
-      if (!diagAbortRef.current)
-        toaster.toast({ title: "SpeechToText", body: `Diagnostics failed: ${e?.message ?? e}` });
-    } finally {
-      setDiagRunning(false);
-    }
   };
 
   const posIdx = Math.max(0, POSITIONS.indexOf(settings.position));
@@ -419,14 +395,6 @@ const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
         />
       </PanelSectionRow>
 
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={diagRunning ? () => { diagAbortRef.current = true; setDiagRunning(false); } : runDiagnostics}
-        >
-          {diagRunning ? "Stop Diagnostics" : "Run Diagnostics"}
-        </ButtonItem>
-      </PanelSectionRow>
     </PanelSection>
     </>
   );

@@ -65,6 +65,60 @@ class Plugin:
 
     async def _main(self):
         decky.logger.info("SpeechToText plugin loaded")
+        asyncio.ensure_future(Plugin._install_dependencies())
+
+    @staticmethod
+    async def _install_dependencies():
+        """
+        Install required system packages on first run (or if missing).
+        Runs in the background so it does not block plugin load.
+        DeckyLoader runs as root, so pacman is available.
+        """
+        packages = {
+            "parecord":  "pulseaudio-utils",
+            "ydotool":   "ydotool",
+            "xdotool":   "xdotool",
+            "wl-copy":   "wl-clipboard",
+        }
+
+        missing = []
+        for binary, package in packages.items():
+            result = subprocess.run(["which", binary], capture_output=True)
+            if result.returncode != 0:
+                missing.append(package)
+
+        if missing:
+            decky.logger.info(f"Installing missing packages: {missing}")
+            try:
+                result = subprocess.run(
+                    ["pacman", "-S", "--noconfirm", "--needed"] + missing,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode == 0:
+                    decky.logger.info("Package installation succeeded")
+                else:
+                    decky.logger.error(f"pacman failed: {result.stderr.strip()}")
+            except Exception as e:
+                decky.logger.error(f"Dependency install error: {e}")
+        else:
+            decky.logger.info("All dependencies already installed")
+
+        # Enable and start ydotoold so ydotool can inject input
+        try:
+            result = subprocess.run(
+                ["systemctl", "enable", "--now", "ydotoold"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0:
+                decky.logger.info("ydotoold enabled and started")
+            else:
+                decky.logger.warning(f"ydotoold service setup: {result.stderr.strip()}")
+        except Exception as e:
+            decky.logger.warning(f"ydotoold service error: {e}")
 
     async def _unload(self):
         await Plugin.cancel_recording(self)

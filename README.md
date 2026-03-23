@@ -1,52 +1,87 @@
+# SpeechToText — Decky Loader Plugin
 
-# deckyLoader-speech-to-text
+A floating microphone bubble for your Steam Deck that lets you speak and have text typed wherever your cursor is — like the mic button on Android.
 
-A Steam Deck DeckyLoader plugin that adds a floating microphone bubble to your screen for speech-to-text input — like the mic button on Android phones.
+## Install
 
-## Features
+> **Requires:** [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) already installed on your Steam Deck.
 
-- **Floating mic bubble** — always visible, draggable anywhere on screen
-- **Tap to start / tap to stop** — click/tap the bubble to toggle recording
-- **Types text at your cursor** — recognized speech is typed into whatever is currently focused (text fields, chat boxes, browsers, etc.)
-- **Last transcript display** — the QAM settings panel shows the most recent transcription result
-## Requirements
-
-- [DeckyLoader](https://github.com/SteamDeckHomebrew/decky-loader) installed on your Steam Deck
-- `xdotool` (installed automatically by `install.sh`, or manually: `sudo pacman -S xdotool`)
-- Internet connection for speech recognition (uses the browser's built-in Web Speech API via Google's servers)
-
-## Installation
+Open a terminal in **Desktop Mode** and run:
 
 ```bash
-# On your Steam Deck (Desktop Mode)
+curl -L https://github.com/cheisner/deckyLoader-speech-to-text/releases/latest/download/install.sh | bash
+```
+
+Or clone and install manually:
+
+```bash
 git clone https://github.com/cheisner/deckyLoader-speech-to-text.git
 cd deckyLoader-speech-to-text
 bash install.sh
 ```
 
-Then in the Steam Deck UI:
+Then reload Decky:
+
 > Quick Access Menu (⋮) → Decky → ··· → Reload plugins
+
+## Features
+
+- **Floating mic bubble** — draggable, always on screen
+- **Tap to record / tap to stop** — turns red while listening
+- **Types text at your cursor** — works in chat, search bars, browsers, and more
+- **Wayland + Gamescope compatible** — uses `ydotool` (kernel-level input) with `xdotool` and clipboard as fallbacks
+- **Settings panel** in the Quick Access Menu — resize, reposition, view last transcript
+- **Built-in diagnostics** — check which tools are available if something isn't working
 
 ## Usage
 
-1. The floating mic bubble appears on screen after the plugin loads.
-2. **Tap** the bubble to start listening — it turns red with a pulsing glow.
-3. Speak naturally — your words are typed at the current cursor position.
-4. **Tap again** to stop recording.
-5. Drag the bubble anywhere on screen to reposition it.
+1. The mic bubble appears on screen when the on-screen keyboard or Steam overlay is open.
+2. **Tap** the bubble — it turns red and starts recording.
+3. Speak naturally.
+4. **Tap again** to stop — your words are typed at the cursor.
+5. Drag the bubble to reposition it.
 
-### Settings (QAM Panel)
+### Settings (Quick Access Menu)
 
-Open the Quick Access Menu → Decky → SpeechToText:
+| Setting                | Description                                    |
+| ---------------------- | ---------------------------------------------- |
+| Show microphone button | Toggle the floating mic bubble                 |
+| Icon size              | Adjust the bubble size (32–80 px)             |
+| Position               | Snap to any screen corner                      |
+| Last Transcript        | View the most recent result; copy or clear     |
+| Run Diagnostics        | Check which text-injection tools are installed |
 
-| Setting | Description |
-|---|---|
-| Show microphone button | Toggle the floating mic bubble on/off |
-| Icon size | Adjust the size of the mic bubble |
-| Position | Move the bubble to a screen corner |
-| Last Transcript | Shows the most recent speech recognition result |
+## Requirements
+
+| Requirement                                                    | Notes                                                                     |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) | Plugin host                                                               |
+| Internet connection                                            | Speech recognition uses Google's API                                      |
+| `ydotool` + `ydotoold`                                     | Primary text injection (Wayland/Gamescope) — installed by `install.sh` |
+| `xdotool`                                                    | Fallback text injection (X11) — installed by `install.sh`              |
+| `wl-clipboard`                                               | Clipboard fallback — installed by `install.sh`                         |
+
+All system dependencies are installed automatically by `install.sh`.
 
 ## How It Works
 
-- **Frontend** (TypeScript/React): Renders the floating bubble and uses the browser's [Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API) (`webkitSpeechRecognition`) for real-time speech recognition.
-- **Backend** (Python): Receives the recognized transcript and uses `xdotool type` to inject the text at the OS level, into whatever window / input field is focused.
+- **Frontend** (TypeScript/React): Renders the floating bubble and settings panel. Sends recording commands to the backend via Decky's RPC bridge.
+- **Backend** (Python): Uses `parecord` to capture microphone audio, sends it to Google's Speech Recognition API via the `SpeechRecognition` library, then types the result using `ydotool type` (Gamescope/Wayland), falling back to `xdotool type` (X11) or clipboard if needed.
+
+## Troubleshooting
+
+**Text isn't being typed**
+Open the QAM panel → press **Run Diagnostics**. It shows which tools (`ydotool`, `xdotool`, `wl-copy`) are available.
+
+**Mic bubble not showing**
+The bubble only appears when the on-screen keyboard or Steam overlay is open. Toggle "Show microphone button" in the QAM panel.
+
+**Speech not recognized**
+Make sure you have an internet connection — recognition is done via Google's servers.
+
+**"ydotoold is not running"**
+Run `sudo systemctl enable --now ydotoold` in a terminal, or re-run `install.sh`.
+
+## License
+
+MIT — see [LICENSE](LICENSE)
