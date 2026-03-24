@@ -16,7 +16,16 @@ Dependencies are installed automatically in the background on first load — not
 
 ### Option 2: Manual install
 
-Open a terminal in **Desktop Mode** and run:
+**Prerequisites** (do these first in Desktop Mode):
+
+1. Make sure **Decky Loader** is installed ([install guide](https://github.com/SteamDeckHomebrew/decky-loader)).
+2. Open **Konsole** (search for it in the application launcher).
+3. Set a `sudo` password if you haven't already — you'll need it during install:
+   ```bash
+   passwd
+   ```
+
+Then run the installer:
 
 ```bash
 curl -L https://github.com/cheisner/deckyLoader-speech-to-text/releases/latest/download/install.sh | bash
@@ -29,6 +38,8 @@ git clone https://github.com/cheisner/deckyLoader-speech-to-text.git
 cd deckyLoader-speech-to-text
 bash install.sh
 ```
+
+> **Note:** If Node.js/npm isn't installed, the script will install it automatically via [nvm](https://github.com/nvm-sh/nvm). This requires an internet connection and may take a minute.
 
 Then reload Decky:
 
@@ -69,7 +80,7 @@ Then reload Decky:
 | `xdotool`                                                    | Fallback text injection (X11) — installed by `install.sh`              |
 | `wl-clipboard`                                               | Clipboard fallback — installed by `install.sh`                         |
 
-All system dependencies are installed automatically by `install.sh`.
+System dependencies (`ydotool`, `xdotool`, `wl-clipboard`) and Node.js are installed automatically by `install.sh` if missing. A `sudo` password and internet connection are required.
 
 ## How It Works
 

@@ -60,6 +60,22 @@ if ! command -v wl-copy &>/dev/null; then
   sudo pacman -S --noconfirm wl-clipboard || echo "    WARNING: wl-clipboard not available."
 fi
 
+# ── Ensure npm is available ───────────────────────────────────────────────────
+if ! command -v npm &>/dev/null; then
+  echo "==> npm not found. Installing nvm + Node LTS..."
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+  export NVM_DIR="$HOME/.nvm"
+  source "$NVM_DIR/nvm.sh"
+  nvm install --lts
+fi
+
+if ! command -v npm &>/dev/null; then
+  echo "ERROR: npm is still not available after attempting nvm install."
+  echo "  Try opening a new terminal, running: source ~/.nvm/nvm.sh && nvm install --lts"
+  echo "  Then re-run install.sh"
+  exit 1
+fi
+
 # ── Build frontend ────────────────────────────────────────────────────────────
 echo "==> Building $PLUGIN_NAME..."
 cd "$PLUGIN_DIR"
