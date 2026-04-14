@@ -1,81 +1,28 @@
 import {
   definePlugin,
-  ToggleField,
-  SliderField,
   PanelSection,
   PanelSectionRow,
   ButtonItem,
   staticClasses,
 } from "@decky/ui";
-import { callable, toaster, routerHook } from "@decky/api";
-import React, { useState, useEffect, useRef, FC } from "react";
-import { FaMicrophone, FaMicrophoneSlash, FaSpinner } from "react-icons/fa";
+import { callable, toaster } from "@decky/api";
+import { useState, useEffect, useRef, FC } from "react";
+import { FaMicrophone } from "react-icons/fa";
 
 // ── Backend callables ─────────────────────────────────────────────────────────
 // start_recording / type_text return '' on success, or an error string.
 // stop_and_transcribe returns the transcript, '' if nothing heard, or 'ERROR: …'.
-// check_tools returns a diagnostic string.
 const startRecording    = callable<[], string>("start_recording");
 const stopAndTranscribe = callable<[], string>("stop_and_transcribe");
 const cancelRecording   = callable<[], void>("cancel_recording");
 const typeText          = callable<[text: string], string>("type_text");
 
-// ── Settings ──────────────────────────────────────────────────────────────────
-interface MicSettings {
-  visible: boolean;
-  position: "top-left" | "top-right" | "bottom-left" | "bottom-right";
-  iconSize: number;
-}
-
-const POSITIONS: MicSettings["position"][] = [
-  "top-left",
-  "top-right",
-  "bottom-left",
-  "bottom-right",
-];
-
-const POSITION_STYLES: Record<MicSettings["position"], React.CSSProperties> = {
-  "top-left":     { top: 16, left: 16 },
-  "top-right":    { top: 16, right: 16 },
-  "bottom-left":  { bottom: 16, left: 16 },
-  "bottom-right": { bottom: 80, right: 16 },
-};
-
-const STORAGE_KEY = "decky-stt-settings";
-
-function defaultSettings(): MicSettings {
-  return {
-    visible: true,
-    position: "bottom-right",
-    iconSize: 56,
-  };
-}
-
-function loadSettings(): MicSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...defaultSettings(), ...JSON.parse(raw) };
-  } catch {}
-  return defaultSettings();
-}
-
-function saveSettings(s: MicSettings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-}
-
-// ── Module-level shared state ─────────────────────────────────────────────────
-let globalSettings = loadSettings();
-const listeners: Array<(s: MicSettings) => void> = [];
-
-function notifyListeners(s: MicSettings) {
-  listeners.forEach((fn) => fn(s));
-}
-
-// Recording state lives at module level so a component remount restores the
-// real current state instead of always resetting to false.
+// ── Module-level recording state ──────────────────────────────────────────────
+// Lives at module level so a QAM panel remount restores the real current state
+// instead of always resetting to idle.
 let _isListening = false;
 
-// Last transcript — persisted in localStorage so it survives module re-evaluation
+// ── Last transcript — persisted across module re-evaluations ──────────────────
 const TRANSCRIPT_KEY = "decky-stt-transcript";
 
 function loadTranscript(): string {
@@ -91,33 +38,25 @@ function setGlobalTranscript(t: string) {
   transcriptListeners.forEach((fn) => fn(t));
 }
 
-// ── Floating mic button ───────────────────────────────────────────────────────
-const FloatingMicButton: FC = () => {
-  const [settings, setSettings] = useState<MicSettings>(globalSettings);
-  const [isListening, setIsListening] = useState(() => _isListening);
+// ── QAM panel ─────────────────────────────────────────────────────────────────
+const Content: FC = () => {
+  const [isListening, setIsListening]       = useState(() => _isListening);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcript, setTranscript]         = useState(() => _lastTranscript);
+  const [copied, setCopied]                 = useState(false);
 
   const isListeningRef = useRef(_isListening);
 
-  // Inject keyframe animation for the transcribing spinner
+  // Keep transcript display in sync with recording results
   useEffect(() => {
-    const style = document.createElement("style");
-    style.textContent = "@keyframes stt-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }";
-    document.head.appendChild(style);
-    return () => { document.head.removeChild(style); };
-  }, []);
-
-  // Subscribe to settings changes pushed from the QAM panel
-  useEffect(() => {
-    const listener = (s: MicSettings) => setSettings(s);
-    listeners.push(listener);
+    transcriptListeners.push(setTranscript);
     return () => {
-      const i = listeners.indexOf(listener);
-      if (i >= 0) listeners.splice(i, 1);
+      const i = transcriptListeners.indexOf(setTranscript);
+      if (i >= 0) transcriptListeners.splice(i, 1);
     };
   }, []);
 
-  // Cleanup on unmount — only cancel if still actively recording
+  // Cancel any active recording when the panel unmounts
   useEffect(() => () => {
     if (isListeningRef.current) {
       isListeningRef.current = false;
@@ -145,7 +84,6 @@ const FloatingMicButton: FC = () => {
     }
     setIsTranscribing(false);
 
-    // Backend signals errors with the 'ERROR: ' prefix
     if (transcript.startsWith("ERROR:")) {
       const msg = transcript.replace(/^ERROR:\s*/, "");
       toaster.toast({ title: "SpeechToText", body: msg });
@@ -177,7 +115,6 @@ const FloatingMicButton: FC = () => {
     } else if (typeResult.startsWith("ERROR:")) {
       toaster.toast({ title: "SpeechToText", body: typeResult.replace(/^ERROR:\s*/, "") });
     }
-    // Empty string = success — already shown "Heard: …" toast above
   };
 
   const startListening = async () => {
@@ -207,13 +144,7 @@ const FloatingMicButton: FC = () => {
     setGlobalTranscript("🎙 Listening…");
   };
 
-  // ── Tap handler ──────────────────────────────────────────────────────────────
-  // onPointerUp + touchAction:none is more reliable than onClick in Decky's
-  // global component context — Steam's input layer can swallow click events.
-  const onPointerUp = () => {
-    // Do not call stopPropagation — in game mode overlay, Steam relies on
-    // pointer events bubbling to the document root to activate input routing.
-    // Blocking propagation can freeze controller/touch/mouse on some pages.
+  const onRecordPress = () => {
     if (isListeningRef.current) {
       stopListening();
     } else {
@@ -221,196 +152,103 @@ const FloatingMicButton: FC = () => {
     }
   };
 
+  // ── Button label / description ───────────────────────────────────────────────
+  const buttonLabel = isTranscribing
+    ? "Transcribing…"
+    : isListening
+    ? "Stop Recording"
+    : "Start Recording";
+
+  const buttonDescription = isTranscribing
+    ? "Processing audio…"
+    : isListening
+    ? "Listening… tap to transcribe"
+    : "Tap to begin";
+
   // ── Render ───────────────────────────────────────────────────────────────────
-  if (!settings.visible) return null;
-
-  const { iconSize, position } = settings;
-  const iconInnerSize = Math.round(iconSize * 0.39);
-  const bgColor = isTranscribing ? "#f39c12" : isListening ? "#e74c3c" : "#1a9fff";
-
-  // Render the button with position:fixed so it only covers its own area —
-  // no full-screen wrapper needed, which avoids interfering with Steam's
-  // gamepad/touch navigation when the in-game overlay or Decky QAM is open.
-  return (
-    <div
-      onPointerUp={isTranscribing ? undefined : onPointerUp}
-      style={{
-        position: "fixed",
-        zIndex: 9999,
-        pointerEvents: isTranscribing ? "none" : "auto",
-        width: iconSize,
-        height: iconSize,
-        borderRadius: "50%",
-        background: bgColor,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: isTranscribing ? "default" : "pointer",
-        boxShadow: isTranscribing
-          ? "0 0 0 8px rgba(243,156,18,0.30), 0 3px 16px rgba(0,0,0,0.6)"
-          : isListening
-          ? "0 0 0 8px rgba(231,76,60,0.30), 0 3px 16px rgba(0,0,0,0.6)"
-          : "0 3px 16px rgba(0,0,0,0.55)",
-        transition: "background 0.15s, box-shadow 0.2s",
-        // "manipulation" allows single taps without interfering with
-        // the overlay's scroll/touch routing in game mode (unlike "none").
-        touchAction: "manipulation",
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        ...POSITION_STYLES[position as MicSettings["position"]],
-      }}
-    >
-      {isTranscribing ? (
-        <div style={{ animation: "stt-spin 1s linear infinite", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <FaSpinner color="white" size={iconInnerSize} />
-        </div>
-      ) : isListening ? (
-        <FaMicrophone color="white" size={iconInnerSize} />
-      ) : (
-        <FaMicrophoneSlash color="white" size={iconInnerSize} />
-      )}
-    </div>
-  );
-};
-
-// ── QAM settings panel ────────────────────────────────────────────────────────
-const Content: FC<{ onUpdate: (s: MicSettings) => void }> = ({ onUpdate }) => {
-  const [settings, setSettings] = useState<MicSettings>(() => globalSettings);
-  const [transcript, setTranscript] = useState(() => _lastTranscript);
-  const [copied, setCopied] = useState(false);
-
-  // Keep transcript display in sync with the floating button
-  useEffect(() => {
-    transcriptListeners.push(setTranscript);
-    return () => {
-      const i = transcriptListeners.indexOf(setTranscript);
-      if (i >= 0) transcriptListeners.splice(i, 1);
-    };
-  }, []);
-
-  const update = (patch: Partial<MicSettings>) => {
-    const next = { ...settings, ...patch };
-    setSettings(next);
-    saveSettings(next);
-    globalSettings = next;
-    onUpdate(next);
-  };
-
-  const posIdx = Math.max(0, POSITIONS.indexOf(settings.position));
-
   return (
     <>
-    <PanelSection title="Last Transcript">
-      <PanelSectionRow>
-        <div style={{
-          background: "rgba(255,255,255,0.07)",
-          border: "1px solid rgba(255,255,255,0.15)",
-          borderRadius: 6,
-          padding: "10px 12px",
-          minHeight: 56,
-          fontSize: 14,
-          lineHeight: 1.5,
-          wordBreak: "break-word",
-          color: transcript ? "#ffffff" : "rgba(255,255,255,0.35)",
-          width: "100%",
-        }}>
-          {transcript || "Tap the mic button — text appears here"}
-        </div>
-      </PanelSectionRow>
-      {transcript ? (
-        <>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={() => {
-                // execCommand is synchronous and works in the Steam overlay
-                // Chromium context without needing clipboard permissions.
-                const el = document.createElement("textarea");
-                el.value = transcript;
-                el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
-                document.body.appendChild(el);
-                el.focus();
-                el.select();
-                const ok = document.execCommand("copy");
-                document.body.removeChild(el);
+      <PanelSection title="Microphone">
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={isTranscribing}
+            description={buttonDescription}
+            onClick={isTranscribing ? undefined : onRecordPress}
+          >
+            {buttonLabel}
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
 
-                if (ok) {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                } else {
-                  // execCommand failed — try async API
-                  navigator.clipboard?.writeText(transcript).then(() => {
+      <PanelSection title="Last Transcript">
+        <PanelSectionRow>
+          <div style={{
+            background: "rgba(255,255,255,0.07)",
+            border: "1px solid rgba(255,255,255,0.15)",
+            borderRadius: 6,
+            padding: "10px 12px",
+            minHeight: 56,
+            fontSize: 14,
+            lineHeight: 1.5,
+            wordBreak: "break-word",
+            color: transcript ? "#ffffff" : "rgba(255,255,255,0.35)",
+            width: "100%",
+          }}>
+            {transcript || "Press Start Recording to begin"}
+          </div>
+        </PanelSectionRow>
+        {transcript ? (
+          <>
+            <PanelSectionRow>
+              <ButtonItem
+                layout="below"
+                onClick={() => {
+                  // execCommand is synchronous and works in the Steam overlay
+                  // Chromium context without needing clipboard permissions.
+                  const el = document.createElement("textarea");
+                  el.value = transcript;
+                  el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+                  document.body.appendChild(el);
+                  el.focus();
+                  el.select();
+                  const ok = document.execCommand("copy");
+                  document.body.removeChild(el);
+
+                  if (ok) {
                     setCopied(true);
                     setTimeout(() => setCopied(false), 2000);
-                  }).catch(() => {
-                    toaster.toast({ title: "SpeechToText", body: "Copy failed — try the Clear button and retype" });
-                  });
-                }
-              }}
-            >
-              {copied ? "Copied!" : "Copy to Clipboard"}
-            </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={() => { setGlobalTranscript(""); }}
-            >
-              Clear
-            </ButtonItem>
-          </PanelSectionRow>
-        </>
-      ) : null}
-    </PanelSection>
-
-    <PanelSection title="Settings">
-      <PanelSectionRow>
-        <ToggleField
-          label="Show microphone button"
-          description={settings.visible ? "Visible" : "Hidden"}
-          checked={settings.visible}
-          onChange={(v: boolean) => update({ visible: v })}
-        />
-      </PanelSectionRow>
-
-      <PanelSectionRow>
-        <SliderField
-          label={`Icon Size: ${settings.iconSize}px`}
-          value={settings.iconSize}
-          min={32}
-          max={80}
-          step={4}
-          onChange={(v: number) => update({ iconSize: v })}
-        />
-      </PanelSectionRow>
-
-      <PanelSectionRow>
-        <SliderField
-          label={`Position: ${settings.position}`}
-          value={posIdx}
-          min={0}
-          max={POSITIONS.length - 1}
-          step={1}
-          onChange={(v: number) => update({ position: POSITIONS[v] })}
-        />
-      </PanelSectionRow>
-
-    </PanelSection>
+                  } else {
+                    navigator.clipboard?.writeText(transcript).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }).catch(() => {
+                      toaster.toast({ title: "SpeechToText", body: "Copy failed — try the Clear button and retype" });
+                    });
+                  }
+                }}
+              >
+                {copied ? "Copied!" : "Copy to Clipboard"}
+              </ButtonItem>
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <ButtonItem
+                layout="below"
+                onClick={() => { setGlobalTranscript(""); }}
+              >
+                Clear
+              </ButtonItem>
+            </PanelSectionRow>
+          </>
+        ) : null}
+      </PanelSection>
     </>
   );
 };
 
 // ── Plugin entry point ────────────────────────────────────────────────────────
-export default definePlugin(() => {
-  globalSettings = loadSettings();
-  routerHook.addGlobalComponent("SpeechToTextBubble", FloatingMicButton);
-
-  return {
-    title: <div className={staticClasses.Title}>SpeechToText</div>,
-    content: <Content onUpdate={notifyListeners} />,
-    icon: <FaMicrophone />,
-    onDismount() {
-      routerHook.removeGlobalComponent("SpeechToTextBubble");
-    },
-  };
-});
+export default definePlugin(() => ({
+  title: <div className={staticClasses.Title}>SpeechToText</div>,
+  content: <Content />,
+  icon: <FaMicrophone />,
+}));

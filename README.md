@@ -1,5 +1,11 @@
 # SpeechToText — Decky Loader Plugin
 
+cd ~/Documents/GitHub/deckyLoader-speech-to-text
+
+bash install.sh
+
+
+
 A floating microphone bubble for your Steam Deck that lets you speak and have text typed wherever your cursor is — like the mic button on Android.
 
 ## Install
@@ -63,8 +69,8 @@ Then reload Decky:
 
 ### Settings (Quick Access Menu)
 
-| Setting                | Description                                    |
-| ---------------------- | ---------------------------------------------- |
+| Setting                | Description                                |
+| ---------------------- | ------------------------------------------ |
 | Show microphone button | Toggle the floating mic bubble             |
 | Icon size              | Adjust the bubble size (32–80 px)         |
 | Position               | Snap to any screen corner                  |
