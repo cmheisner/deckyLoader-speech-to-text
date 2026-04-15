@@ -5,7 +5,7 @@ import {
   ButtonItem,
   staticClasses,
 } from "@decky/ui";
-import { callable, toaster } from "@decky/api";
+import { callable, toaster, useQuickAccessVisible } from "@decky/api";
 import { useState, useEffect, useRef, FC } from "react";
 import { FaMicrophone } from "react-icons/fa";
 
@@ -46,6 +46,8 @@ const Content: FC = () => {
   const [copied, setCopied]                 = useState(false);
 
   const isListeningRef = useRef(_isListening);
+  const pendingTypeRef = useRef<string | null>(null);
+  const isQAMVisible   = useQuickAccessVisible();
 
   // Keep transcript display in sync with recording results
   useEffect(() => {
@@ -56,13 +58,34 @@ const Content: FC = () => {
     };
   }, []);
 
-  // Cancel any active recording when the panel unmounts
-  useEffect(() => () => {
-    if (isListeningRef.current) {
-      isListeningRef.current = false;
-      cancelRecording();
+  // When QAM closes, fire any pending typeText call so keystrokes go to the
+  // game/app rather than the overlay.
+  // 1500ms delay: useQuickAccessVisible fires when the close animation *starts*,
+  // but Gamescope needs ~1s to fully shift input focus back to the game window.
+  useEffect(() => {
+    if (!isQAMVisible && pendingTypeRef.current !== null) {
+      const text = pendingTypeRef.current;
+      pendingTypeRef.current = null;
+      setTimeout(async () => {
+        let result: string;
+        try {
+          result = await typeText(text);
+        } catch (e: any) {
+          toaster.toast({ title: "SpeechToText", body: `Type failed: ${e?.message ?? e}` });
+          return;
+        }
+        if (result === "CLIPBOARD") {
+          toaster.toast({ title: "SpeechToText", body: "Copied to clipboard — paste with Ctrl+V" });
+        } else if (result.startsWith("ERROR:")) {
+          toaster.toast({ title: "SpeechToText", body: result.replace(/^ERROR:\s*/, "") });
+        }
+      }, 1500);
     }
-  }, []);
+  }, [isQAMVisible]);
+
+  // NOTE: do NOT cancel recording on unmount — the QAM panel opens and closes
+  // frequently and recording must survive those cycles. Cancellation only happens
+  // via the Stop button (stopListening) or plugin unload (onDismount below).
 
   // ── Recording helpers ────────────────────────────────────────────────────────
   const stopListening = async () => {
@@ -99,22 +122,10 @@ const Content: FC = () => {
 
     setGlobalTranscript(transcript);
 
-    let typeResult: string;
-    try {
-      typeResult = await typeText(transcript + " ");
-    } catch (e: any) {
-      toaster.toast({ title: "SpeechToText", body: `Type call failed: ${e?.message ?? e}` });
-      return;
-    }
-
-    if (typeResult === "CLIPBOARD") {
-      toaster.toast({
-        title: "SpeechToText",
-        body: `Copied to clipboard! Paste with Ctrl+V\n"${transcript}"`,
-      });
-    } else if (typeResult.startsWith("ERROR:")) {
-      toaster.toast({ title: "SpeechToText", body: typeResult.replace(/^ERROR:\s*/, "") });
-    }
+    // Queue typing — will fire 500 ms after the user closes QAM so the
+    // keystrokes go to the game/app rather than the overlay.
+    pendingTypeRef.current = transcript + " ";
+    toaster.toast({ title: "SpeechToText", body: "Close this menu to type the text" });
   };
 
   const startListening = async () => {
@@ -152,7 +163,7 @@ const Content: FC = () => {
     }
   };
 
-  // ── Button label / description ───────────────────────────────────────────────
+  // ── Button label / description / status color ────────────────────────────────
   const buttonLabel = isTranscribing
     ? "Transcribing…"
     : isListening
@@ -165,10 +176,24 @@ const Content: FC = () => {
     ? "Listening… tap to transcribe"
     : "Tap to begin";
 
+  // Match the old floating button's color scheme: blue → red → orange
+  const statusColor = isTranscribing ? "#f39c12" : isListening ? "#e74c3c" : "#1a9fff";
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <>
       <PanelSection title="Microphone">
+        {/* Colored status bar — mirrors the floating button's blue/red/orange states */}
+        <PanelSectionRow>
+          <div style={{
+            height: 4,
+            borderRadius: 2,
+            background: statusColor,
+            width: "100%",
+            transition: "background 0.2s",
+            marginBottom: 4,
+          }} />
+        </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem
             layout="below"
@@ -251,4 +276,12 @@ export default definePlugin(() => ({
   title: <div className={staticClasses.Title}>SpeechToText</div>,
   content: <Content />,
   icon: <FaMicrophone />,
+  onDismount() {
+    // Cancel any active recording when the plugin is unloaded (not on QAM close —
+    // recording intentionally survives QAM open/close cycles).
+    if (_isListening) {
+      _isListening = false;
+      cancelRecording();
+    }
+  },
 }));

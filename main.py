@@ -233,7 +233,13 @@ class Plugin:
             old_timeout = socket.getdefaulttimeout()
             socket.setdefaulttimeout(10)
             try:
-                text = recognizer.recognize_google(audio)
+                try:
+                    text = recognizer.recognize_google(audio)
+                except AttributeError:
+                    # Google occasionally returns a malformed response; retry once
+                    decky.logger.warning("recognize_google attribute error, retrying once…")
+                    await asyncio.sleep(0.4)
+                    text = recognizer.recognize_google(audio)
             finally:
                 socket.setdefaulttimeout(old_timeout)
             decky.logger.info(f"Transcribed: {text!r}")
