@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(npm run:*)",
-      "Bash(bash /home/deck/Documents/GitHub/deckyLoader-speech-to-text/install.sh)"
+      "Bash(bash /home/deck/Documents/GitHub/deckyLoader-speech-to-text/install.sh)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
