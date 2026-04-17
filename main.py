@@ -276,56 +276,105 @@ class Plugin:
         """
         Type text at the current cursor position.
         Returns:
-          ''          — success (typed via ydotool or xdotool)
+          ''          — success
           'CLIPBOARD' — text was copied to clipboard; user should paste with Ctrl+V
           'ERROR: …'  — all methods failed
         """
         env = _user_env()
         decky.logger.info(f"type_text: {text!r}")
 
-        # ── 1. ydotool (kernel uinput — works on Gamescope/Wayland) ──────────
+        # ── 1. wl-copy + ydotool key ctrl+v (primary — Gamescope/Wayland) ────
+        # Clipboard paste tolerates text-field focus loss better than raw
+        # character injection, since the app handles the paste action itself.
+        clipboard_ready = False
+        try:
+            cp = subprocess.run(["wl-copy", "--", text], env=env,
+                                capture_output=True, timeout=5)
+            if cp.returncode == 0:
+                clipboard_ready = True
+                await asyncio.sleep(0.05)
+                paste = subprocess.run(
+                    ["ydotool", "key", "ctrl+v"],
+                    env=env, capture_output=True, timeout=5,
+                )
+                if paste.returncode == 0:
+                    decky.logger.info("type_text: wl-copy + ydotool ctrl+v succeeded")
+                    return ""
+                decky.logger.warning(
+                    f"ydotool ctrl+v failed (rc={paste.returncode}): "
+                    f"{paste.stderr.decode(errors='replace').strip()}"
+                )
+            else:
+                decky.logger.warning(
+                    f"wl-copy failed (rc={cp.returncode}): "
+                    f"{cp.stderr.decode(errors='replace').strip()}"
+                )
+        except FileNotFoundError as e:
+            decky.logger.info(f"wl-copy or ydotool not found: {e}")
+        except Exception as e:
+            decky.logger.warning(f"wl-copy+ydotool ctrl+v error: {e}")
+
+        # ── 2. wl-copy + xdotool key ctrl+v (X11 fallback) ───────────────────
+        if clipboard_ready:
+            try:
+                xenv = env.copy()
+                xenv["DISPLAY"] = ":0"
+                paste = subprocess.run(
+                    ["xdotool", "key", "--clearmodifiers", "ctrl+v"],
+                    env=xenv, capture_output=True, timeout=5,
+                )
+                if paste.returncode == 0:
+                    decky.logger.info("type_text: wl-copy + xdotool ctrl+v succeeded")
+                    return ""
+                decky.logger.warning(
+                    f"xdotool ctrl+v failed (rc={paste.returncode}): "
+                    f"{paste.stderr.decode(errors='replace').strip()}"
+                )
+            except FileNotFoundError:
+                decky.logger.info("xdotool not found for ctrl+v")
+            except Exception as e:
+                decky.logger.warning(f"xdotool ctrl+v error: {e}")
+            # Clipboard is set — surface it so user can paste manually
+            decky.logger.info("type_text: paste simulation failed but clipboard is ready")
+            return "CLIPBOARD"
+
+        # ── 3. ydotool type (direct injection — fallback if wl-copy absent) ──
         try:
             result = subprocess.run(
                 ["ydotool", "type", "--key-delay", "12", "--", text],
-                env=env,
-                capture_output=True,
-                timeout=15,
+                env=env, capture_output=True, timeout=15,
             )
             if result.returncode == 0:
-                decky.logger.info("type_text: ydotool succeeded")
+                decky.logger.info("type_text: ydotool type succeeded")
                 return ""
             stderr = result.stderr.decode(errors="replace").strip()
-            decky.logger.warning(f"ydotool failed (rc={result.returncode}): {stderr}")
+            decky.logger.warning(f"ydotool type failed (rc={result.returncode}): {stderr}")
         except FileNotFoundError:
             decky.logger.info("ydotool not found, trying xdotool")
         except subprocess.TimeoutExpired:
-            decky.logger.error("ydotool timed out")
+            decky.logger.error("ydotool type timed out")
 
-        # ── 2. xdotool with explicit DISPLAY=:0 ──────────────────────────────
+        # ── 4. xdotool type ──────────────────────────────────────────────────
         try:
             xenv = env.copy()
             xenv["DISPLAY"] = ":0"
             result = subprocess.run(
                 ["xdotool", "type", "--clearmodifiers", "--delay", "12", "--", text],
-                env=xenv,
-                capture_output=True,
-                timeout=15,
+                env=xenv, capture_output=True, timeout=15,
             )
             if result.returncode == 0:
-                decky.logger.info("type_text: xdotool succeeded")
+                decky.logger.info("type_text: xdotool type succeeded")
                 return ""
             stderr = result.stderr.decode(errors="replace").strip()
-            decky.logger.warning(f"xdotool failed (rc={result.returncode}): {stderr}")
+            decky.logger.warning(f"xdotool type failed (rc={result.returncode}): {stderr}")
         except FileNotFoundError:
-            decky.logger.info("xdotool not found, trying clipboard fallback")
+            decky.logger.info("xdotool not found, trying xclip clipboard fallback")
         except subprocess.TimeoutExpired:
-            decky.logger.error("xdotool timed out")
+            decky.logger.error("xdotool type timed out")
 
-        # ── 3. Clipboard fallback (wl-copy → xclip) ──────────────────────────
-        # wl-copy reads from stdin
+        # ── 5. xclip clipboard-only last resort ──────────────────────────────
         for clip_tool, build_cmd in [
-            ("wl-copy", lambda t: (["wl-copy", "--", t], None)),
-            ("xclip",   lambda t: (["xclip", "-selection", "clipboard"], t.encode())),
+            ("xclip", lambda t: (["xclip", "-selection", "clipboard"], t.encode())),
         ]:
             cmd, stdin_data = build_cmd(text)
             try:

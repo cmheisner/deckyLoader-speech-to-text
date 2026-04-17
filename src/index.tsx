@@ -5,7 +5,7 @@ import {
   ButtonItem,
   staticClasses,
 } from "@decky/ui";
-import { callable, toaster, useQuickAccessVisible } from "@decky/api";
+import { callable, toaster } from "@decky/api";
 import { useState, useEffect, useRef, FC } from "react";
 import { FaMicrophone } from "react-icons/fa";
 
@@ -21,6 +21,36 @@ const typeText          = callable<[text: string], string>("type_text");
 // Lives at module level so a QAM panel remount restores the real current state
 // instead of always resetting to idle.
 let _isListening = false;
+
+// ── Module-level auto-paste scheduler ─────────────────────────────────────────
+// Must live outside the component — the Content component unmounts when QAM
+// closes, so any useEffect / ref approach dies before it can fire.
+let _pendingPasteTimer: ReturnType<typeof setTimeout> | null = null;
+
+function schedulePaste(text: string) {
+  if (_pendingPasteTimer !== null) {
+    clearTimeout(_pendingPasteTimer);
+    _pendingPasteTimer = null;
+  }
+  // 4 s gives the user time to close the QAM and Gamescope time to shift
+  // input focus back to the game window before we simulate Ctrl+V.
+  _pendingPasteTimer = setTimeout(async () => {
+    _pendingPasteTimer = null;
+    let result: string;
+    try {
+      result = await typeText(text);
+    } catch (e: any) {
+      toaster.toast({ title: "SpeechToText", body: `Auto-paste failed — use Ctrl+V` });
+      return;
+    }
+    if (result === "CLIPBOARD") {
+      toaster.toast({ title: "SpeechToText", body: "Auto-paste failed — use Ctrl+V" });
+    } else if (result.startsWith("ERROR:")) {
+      toaster.toast({ title: "SpeechToText", body: "Auto-paste failed — use Ctrl+V" });
+    }
+    // on success no toast needed — text appeared in the game
+  }, 2500);
+}
 
 // ── Last transcript — persisted across module re-evaluations ──────────────────
 const TRANSCRIPT_KEY = "decky-stt-transcript";
@@ -46,8 +76,6 @@ const Content: FC = () => {
   const [copied, setCopied]                 = useState(false);
 
   const isListeningRef = useRef(_isListening);
-  const pendingTypeRef = useRef<string | null>(null);
-  const isQAMVisible   = useQuickAccessVisible();
 
   // Keep transcript display in sync with recording results
   useEffect(() => {
@@ -57,31 +85,6 @@ const Content: FC = () => {
       if (i >= 0) transcriptListeners.splice(i, 1);
     };
   }, []);
-
-  // When QAM closes, fire any pending typeText call so keystrokes go to the
-  // game/app rather than the overlay.
-  // 1500ms delay: useQuickAccessVisible fires when the close animation *starts*,
-  // but Gamescope needs ~1s to fully shift input focus back to the game window.
-  useEffect(() => {
-    if (!isQAMVisible && pendingTypeRef.current !== null) {
-      const text = pendingTypeRef.current;
-      pendingTypeRef.current = null;
-      setTimeout(async () => {
-        let result: string;
-        try {
-          result = await typeText(text);
-        } catch (e: any) {
-          toaster.toast({ title: "SpeechToText", body: `Type failed: ${e?.message ?? e}` });
-          return;
-        }
-        if (result === "CLIPBOARD") {
-          toaster.toast({ title: "SpeechToText", body: "Copied to clipboard — paste with Ctrl+V" });
-        } else if (result.startsWith("ERROR:")) {
-          toaster.toast({ title: "SpeechToText", body: result.replace(/^ERROR:\s*/, "") });
-        }
-      }, 1500);
-    }
-  }, [isQAMVisible]);
 
   // NOTE: do NOT cancel recording on unmount — the QAM panel opens and closes
   // frequently and recording must survive those cycles. Cancellation only happens
@@ -122,10 +125,22 @@ const Content: FC = () => {
 
     setGlobalTranscript(transcript);
 
-    // Queue typing — will fire 500 ms after the user closes QAM so the
-    // keystrokes go to the game/app rather than the overlay.
-    pendingTypeRef.current = transcript + " ";
-    toaster.toast({ title: "SpeechToText", body: "Close this menu to type the text" });
+    // Copy to browser clipboard immediately as a reliable fallback —
+    // user can always Ctrl+V even if auto-paste misses.
+    try {
+      const el = document.createElement("textarea");
+      el.value = transcript + " ";
+      el.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+      document.body.appendChild(el);
+      el.focus(); el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    } catch {}
+
+    // Schedule auto-paste 4 s from now — module-level so it survives
+    // component unmount when the user closes the QAM.
+    schedulePaste(transcript + " ");
+    toaster.toast({ title: "SpeechToText", body: "Close menu now — auto-paste in ~2.5s" });
   };
 
   const startListening = async () => {
